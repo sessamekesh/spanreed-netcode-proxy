@@ -50,8 +50,8 @@ DestinationVerdict
 
 ```
 SpanreedVerdict
-+---------+-----------+-----------+---------+
-| Verdict | IsTimeout | (padding) | AppData |
-|  1 bit  |   1 bit   |  6 bits   |         |
-+---------+-----------+-----------+---------+
++--------------+-----------+-----------+-----------+---------+
+| IsProxyError | IsTimeout |  Verdict  | (padding) | AppData |
+|    1 bit     |   1 bit   |   1 bit   |  5 bits   |         |
++--------------+-----------+-----------+-----------+---------+
 ```

@@ -32,7 +32,8 @@ type ConnectionResponse struct {
 
 type DestinationMessage struct {
 	MagicNumber        uint32
-	Verison            uint8
+	ClientId           uint32
+	Version            uint8
 	MessageType        DestinationMessageType
 	ConnectionResponse *ConnectionResponse
 	AppData            []byte
@@ -58,16 +59,17 @@ func (s DestinationMessageSerializer) parseConnectionResponse(msg []byte, readPt
 }
 
 func (s DestinationMessageSerializer) Parse(msg []byte) (*DestinationMessage, error) {
-	if len(msg) < 5 {
+	if len(msg) < 9 {
 		return nil, &errors.Underflow{
 			MessageName: "DestinationMessage",
 			MsgSize:     len(msg),
-			MinimumSize: 5,
+			MinimumSize: 9,
 		}
 	}
 
 	magicNumber := binary.LittleEndian.Uint32(msg[0:4])
-	versionTypeByte := msg[4]
+	clientId := binary.LittleEndian.Uint32(msg[4:8])
+	versionTypeByte := msg[8]
 	version := versionTypeByte & 0xF0 >> 4
 	msgTypeNum := versionTypeByte & 0xF
 	msgType := clientHeaderIdToMessageType(msgTypeNum)
@@ -108,7 +110,8 @@ func (s DestinationMessageSerializer) Parse(msg []byte) (*DestinationMessage, er
 
 	return &DestinationMessage{
 		MagicNumber:        magicNumber,
-		Verison:            version,
+		ClientId:           clientId,
+		Version:            version,
 		MessageType:        msgType,
 		ConnectionResponse: connectionResponse,
 		AppData:            appData,

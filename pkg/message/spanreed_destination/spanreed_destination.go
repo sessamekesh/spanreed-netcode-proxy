@@ -27,8 +27,9 @@ func messageTypeToClientHeaderId(msgType SpanreedDestinationMessageType) uint8 {
 }
 
 type ConnectionResponse struct {
-	Verdict   bool
-	IsTimeout bool
+	Verdict      bool
+	IsTimeout    bool
+	IsProxyError bool
 }
 
 type SpanreedDestinationMessage struct {
@@ -47,6 +48,7 @@ type SpanreedDestinationMessageSerializer struct {
 func (s SpanreedDestinationMessageSerializer) serializeConnectionResponse(out []byte, response *ConnectionResponse) ([]byte, error) {
 	var verdict uint8
 	var isTimeout uint8
+	var isProxyError uint8
 
 	if response.Verdict {
 		verdict = 0b1
@@ -54,8 +56,11 @@ func (s SpanreedDestinationMessageSerializer) serializeConnectionResponse(out []
 	if response.IsTimeout {
 		isTimeout = 0b10
 	}
+	if response.IsProxyError {
+		isProxyError = 0b100
+	}
 
-	return append(out, verdict|isTimeout), nil
+	return append(out, verdict|isTimeout|isProxyError), nil
 }
 
 func (s SpanreedDestinationMessageSerializer) Serialize(msg *SpanreedDestinationMessage) ([]byte, error) {

@@ -49,3 +49,21 @@ type NameCollision struct {
 func (e *NameCollision) Error() string {
 	return fmt.Sprintf("Name collision for name '%s' in context '%s'", e.Name, e.CollisionContext)
 }
+
+type ConnectionRefusedByDestination struct{}
+
+func (e *ConnectionRefusedByDestination) Error() string {
+	return "Connection refused by server"
+}
+
+type AuthTimeout struct{}
+
+func (e *AuthTimeout) Error() string {
+	return "Auth timeout"
+}
+
+type ConnectionTimeout struct{}
+
+func (e *ConnectionTimeout) Error() string {
+	return "Connection timed out"
+}
