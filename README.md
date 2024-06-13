@@ -1,3 +1,16 @@
+TODO: Simplify the exchange.
+
+Client Transport:
+* Forwards "opening" messages, receives "verdict" yes/no from destination transport
+* Forwards "messages" (only after verdict is received, other messages are dropped)
+
+Destination transport:
+* Decides (asynchronously) if a client forwarding should be connected or not (may involve destination)
+* Forwards messages from destination to appropriate client ID
+
+For ping/pong: messages do have recv/process timestamps sent along, it's up to client/destination handlers
+  to implement ping/pong on their own in AppData.
+
 # spanreed-netcode-proxy
 
 Proxy to forward messages from Web APIs (WebTransport etc.) to game servers that use UDP/TCP

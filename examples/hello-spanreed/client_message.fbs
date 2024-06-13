@@ -1,0 +1,22 @@
+namespace HelloSpanreed;
+
+table UserConnectMessage {
+  name: string;
+}
+
+table UserClickMessage {
+  x: float;
+  y: float;
+}
+
+table UserChatMessage {
+  text: string;
+}
+
+union UserMessage { UserConnectMessage, UserClickMessage, UserChatMessage }
+
+table ClientMessage {
+  user_message: UserMessage;
+}
+
+root_type ClientMessage;

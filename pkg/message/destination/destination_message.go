@@ -67,6 +67,7 @@ func (s DestinationMessageSerializer) Parse(msg []byte) (*DestinationMessage, er
 		}
 	}
 
+	// TODO (sessamekesh): For wire formats, shouldn't this be BigEndian?
 	magicNumber := binary.LittleEndian.Uint32(msg[0:4])
 	clientId := binary.LittleEndian.Uint32(msg[4:8])
 	versionTypeByte := msg[8]

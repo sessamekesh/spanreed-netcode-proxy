@@ -1,0 +1,33 @@
+namespace HelloSpanreed;
+
+enum Color : byte {
+  Red = 0,
+  Green,
+  Blue,
+  Indigo,
+  FireOrange,
+}
+
+struct Dot {
+  x: float;
+  y: float;
+  radius: float;
+  color: Color;
+}
+
+table ServerChatMessage {
+  user: string;
+  text: string;
+}
+
+table ServerGameStateMessage {
+  dots: [Dot];
+}
+
+union Message { ServerChatMessage, ServerGameStateMessage }
+
+table ServerMessage {
+  message: Message;
+}
+
+root_type ServerMessage;
