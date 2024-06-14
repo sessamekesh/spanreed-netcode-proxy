@@ -9,10 +9,6 @@ import (
 	"github.com/sessamekesh/spanreed-netcode-proxy/internal"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/errors"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/handlers"
-	clientmsg "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/client"
-	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/destination"
-	spanclientmsg "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/spanreed_client"
-	spandestintationmsg "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/spanreed_destination"
 	"go.uber.org/zap"
 )
 
@@ -41,14 +37,15 @@ func (e *NoMatchingHandlerForConnectionString) Error() string {
 }
 
 type clientHandlerChannels struct {
-	outgoingMessages chan<- handlers.OutgoingClientMessage
-	closeRequests    chan<- handlers.ClientCloseCommand
+	connectionVerdicts chan<- handlers.OpenClientConnectionVerdict
+	outgoingMessages   chan<- handlers.ClientMessage
+	closeRequests      chan<- handlers.ClientCloseCommand
 }
 
 type destinationHandlerChannels struct {
-	outgoingMessages       chan<- handlers.OutgoingDestinationMessage
-	openConnectionsChannel chan<- handlers.OpenDestinationConnectionCommand
-	closeRequests          chan<- handlers.DestinationCloseCommand
+	outgoingMessages       chan<- handlers.DestinationMessage
+	openConnectionsChannel chan<- handlers.OpenClientConnectionCommand
+	closeRequests          chan<- handlers.ClientCloseCommand
 }
 
 type proxy struct {
@@ -59,11 +56,19 @@ type proxy struct {
 	clientStore *internal.ClientStore
 	startTime   time.Time
 
-	incomingClientMessageSendChannel chan<- handlers.IncomingClientMessage
-	incomingClientMessageRecvChannel <-chan handlers.IncomingClientMessage
+	incomingClientMessageSendChannel        chan<- handlers.ClientMessage
+	incomingClientMessageRecvChannel        <-chan handlers.ClientMessage
+	incomingClientCloseRequestsSendChannel  chan<- handlers.ClientCloseCommand
+	incomingClientCloseRequestsRecvChannel  <-chan handlers.ClientCloseCommand
+	incomingClientOpenConnectionSendChannel chan<- handlers.OpenClientConnectionCommand
+	incomingClientOpenConnectionRecvChannel <-chan handlers.OpenClientConnectionCommand
 
-	incomingDestinationMessageSendChannel chan<- handlers.IncomingDestinationMessage
-	incomingDestinationMessageRecvChannel <-chan handlers.IncomingDestinationMessage
+	incomingDestinationVerdictSendChannel       chan<- handlers.OpenClientConnectionVerdict
+	incomingDesetinationVerdictRecvChannel      <-chan handlers.OpenClientConnectionVerdict
+	incomingDestinationMessageSendChannel       chan<- handlers.DestinationMessage
+	incomingDestinationMessageRecvChannel       <-chan handlers.DestinationMessage
+	incomingDestinationCloseRequestsSendChannel chan<- handlers.ClientCloseCommand
+	incomingDestinationCloseRequestsRecvChannel <-chan handlers.ClientCloseCommand
 
 	mut_outgoingClientMessageChannels sync.RWMutex
 	outgoingClientMessageChannels     map[string]clientHandlerChannels
@@ -122,8 +127,13 @@ func CreateProxy(config ProxyConfig) *proxy {
 		maxConcurrentConnections = config.MaxConcurrentConnections
 	}
 
-	incomingClientMessagesChannel := make(chan handlers.IncomingClientMessage, incomingClientMessageBufferLength)
-	incomingDestinationMessagesChannel := make(chan handlers.IncomingDestinationMessage, incomingDestinationMessageBufferLength)
+	incomingClientMessagesChannel := make(chan handlers.ClientMessage, incomingClientMessageBufferLength)
+	incomingClientCloseRequests := make(chan handlers.ClientCloseCommand, incomingClientMessageBufferLength)
+	incomingClientOpenRequests := make(chan handlers.OpenClientConnectionCommand, incomingClientMessageBufferLength)
+
+	incomingDestinationMessagesChannel := make(chan handlers.DestinationMessage, incomingDestinationMessageBufferLength)
+	incomingDestinationVerdictsChannel := make(chan handlers.OpenClientConnectionVerdict, incomingDestinationMessageBufferLength)
+	incomingDestinationCloseRequests := make(chan handlers.ClientCloseCommand, incomingDestinationMessageBufferLength)
 
 	var magicNumber uint32 = 0x52554259
 	var version uint8 = 0
@@ -170,11 +180,19 @@ func CreateProxy(config ProxyConfig) *proxy {
 		clientStore: internal.CreateClientStore(maxConcurrentConnections),
 		startTime:   time.Now(),
 
-		incomingClientMessageSendChannel: incomingClientMessagesChannel,
-		incomingClientMessageRecvChannel: incomingClientMessagesChannel,
+		incomingClientMessageSendChannel:        incomingClientMessagesChannel,
+		incomingClientMessageRecvChannel:        incomingClientMessagesChannel,
+		incomingClientCloseRequestsSendChannel:  incomingClientCloseRequests,
+		incomingClientCloseRequestsRecvChannel:  incomingClientCloseRequests,
+		incomingClientOpenConnectionSendChannel: incomingClientOpenRequests,
+		incomingClientOpenConnectionRecvChannel: incomingClientOpenRequests,
 
-		incomingDestinationMessageSendChannel: incomingDestinationMessagesChannel,
-		incomingDestinationMessageRecvChannel: incomingDestinationMessagesChannel,
+		incomingDestinationMessageSendChannel:       incomingDestinationMessagesChannel,
+		incomingDestinationMessageRecvChannel:       incomingDestinationMessagesChannel,
+		incomingDestinationVerdictSendChannel:       incomingDestinationVerdictsChannel,
+		incomingDesetinationVerdictRecvChannel:      incomingDestinationVerdictsChannel,
+		incomingDestinationCloseRequestsSendChannel: incomingDestinationCloseRequests,
+		incomingDestinationCloseRequestsRecvChannel: incomingDestinationCloseRequests,
 
 		mut_outgoingClientMessageChannels: sync.RWMutex{},
 		outgoingClientMessageChannels:     make(map[string]clientHandlerChannels),
@@ -223,21 +241,29 @@ func (p *proxy) CreateClientMessageHandler(name string) (*handlers.ClientMessage
 		incomingClientConnectionBufferLength = p.config.IncomingClientConnectionBufferLength
 	}
 
-	outgoingMessageChannel := make(chan handlers.OutgoingClientMessage, outgoingMessageChannelLength)
+	outgoingMessageChannel := make(chan handlers.ClientMessage, outgoingMessageChannelLength)
+	outgoingVerdictsChannel := make(chan handlers.OpenClientConnectionVerdict, incomingClientConnectionBufferLength)
 	closeRequests := make(chan handlers.ClientCloseCommand, incomingClientConnectionBufferLength)
 
 	p.outgoingClientMessageChannels[name] = clientHandlerChannels{
-		outgoingMessages: outgoingMessageChannel,
-		closeRequests:    closeRequests,
+		connectionVerdicts: outgoingVerdictsChannel,
+		outgoingMessages:   outgoingMessageChannel,
+		closeRequests:      closeRequests,
 	}
 
 	return &handlers.ClientMessageHandler{
-		Name:                         name,
-		GetNextClientId:              p.getClientIdCbForMessageHandler(name),
-		GetNowTimestamp:              p.getNowTime,
-		IncomingClientMessageChannel: p.incomingClientMessageSendChannel,
-		OutgoingClientMessageChannel: outgoingMessageChannel,
-		CloseRequests:                closeRequests,
+		Name:            name,
+		GetNextClientId: p.getClientIdCbForMessageHandler(name),
+		GetNowTimestamp: p.getNowTime,
+
+		OpenClientChannel:        p.incomingClientOpenConnectionSendChannel,
+		OpenClientVerdictChannel: outgoingVerdictsChannel,
+
+		IncomingMessageChannel: p.incomingClientMessageSendChannel,
+		OutgoingMessageChannel: outgoingMessageChannel,
+
+		IncomingCloseRequests: p.incomingClientCloseRequestsRecvChannel,
+		OutgoingCloseRequests: closeRequests,
 	}, nil
 }
 
@@ -274,21 +300,26 @@ func (p *proxy) CreateDestinationMessageHandler(name string, matchConnectionStri
 		incomingClientConnectionBufferLength = p.config.IncomingClientConnectionBufferLength
 	}
 
-	outgoingMessageChannel := make(chan handlers.OutgoingDestinationMessage, outgoingMessageChannelLength)
-	openConnectionsChannel := make(chan handlers.OpenDestinationConnectionCommand, incomingClientConnectionBufferLength)
-	closeRequestsChannel := make(chan handlers.DestinationCloseCommand, incomingClientConnectionBufferLength)
+	outgoingMessageChannel := make(chan handlers.DestinationMessage, outgoingMessageChannelLength)
+	openConnectionsChannel := make(chan handlers.OpenClientConnectionCommand, incomingClientConnectionBufferLength)
+	closeRequestsChannel := make(chan handlers.ClientCloseCommand, incomingClientConnectionBufferLength)
 
 	p.mut_connectedDestinationHandlers.Lock()
 	defer p.mut_connectedDestinationHandlers.Unlock()
 
 	newHandler := &handlers.DestinationMessageHandler{
-		MatchConnectionString:             matchConnectionStringFn,
-		Name:                              name,
-		GetNowTimestamp:                   p.getNowTime,
-		IncomingDestinationMessageChannel: p.incomingDestinationMessageSendChannel,
-		OutgoingDestinationMessageChannel: outgoingMessageChannel,
-		ConnectionOpenRequests:            openConnectionsChannel,
-		CloseRequests:                     closeRequestsChannel,
+		MatchConnectionString: matchConnectionStringFn,
+		Name:                  name,
+		GetNowTimestamp:       p.getNowTime,
+
+		OpenClientChannel:        openConnectionsChannel,
+		OpenClientVerdictChannel: p.incomingDestinationVerdictSendChannel,
+
+		IncomingMessageChannel: p.incomingDestinationMessageSendChannel,
+		OutgoingMessageChannel: outgoingMessageChannel,
+
+		OutgoingCloseRequests: closeRequestsChannel,
+		IncomingCloseRequests: p.incomingDestinationCloseRequestsRecvChannel,
 	}
 
 	destinationHandlerChannels := destinationHandlerChannels{
@@ -320,11 +351,23 @@ func (p *proxy) Start(ctx context.Context) {
 				return
 			case clientMsg := <-p.incomingClientMessageRecvChannel:
 				p.log.Debug("Spanreed proxy received incoming message from client handler to forward on to destination")
-				err := p.handleClientMessage(clientMsg)
+				err := p.forwardClientMessage(clientMsg)
 				if err == nil {
 					p.clientStore.SetClientRecvTimestamp(clientMsg.ClientId, p.getNowTime())
 				} else {
 					p.log.Error("Error handling client message", zap.Uint32("clientId", clientMsg.ClientId), zap.Error(err))
+				}
+			case connRequest := <-p.incomingClientOpenConnectionRecvChannel:
+				p.log.Debug("Spanreed proxy received connection request from client handler")
+				connErr := p.handleClientConnectionRequestMessage(connRequest)
+				if connErr != nil {
+					p.log.Error("Error handling client connection request", zap.Uint32("clientId", connRequest.ClientId), zap.Error(connErr))
+				}
+			case closeRequest := <-p.incomingClientCloseRequestsRecvChannel:
+				p.log.Debug("Spanreed proxy received a client close request from a client")
+				kickErr := p.kickClient(closeRequest.ClientId, closeRequest.Reason)
+				if kickErr != nil {
+					p.log.Error("Error handling client kick request", zap.Error(kickErr))
 				}
 			}
 		}
@@ -343,9 +386,20 @@ func (p *proxy) Start(ctx context.Context) {
 				return
 			case destinationMsg := <-p.incomingDestinationMessageRecvChannel:
 				p.log.Debug("Spanreed proxy received incoming message from destination handler to forward on to client")
-				err := p.handleDestinationMessage(destinationMsg)
+				err := p.forwardDestinationMessage(destinationMsg)
 				if err == nil {
 					p.clientStore.SetDestinationRecvTimestamp(destinationMsg.ClientId, p.getNowTime())
+				}
+			case verdict := <-p.incomingDesetinationVerdictRecvChannel:
+				err := p.forwardDestinationVerdict(verdict)
+				if err != nil {
+					p.log.Error("Error forwarding destination verdict", zap.Uint32("clientId", verdict.ClientId), zap.Error(err))
+				}
+			case kick := <-p.incomingDestinationCloseRequestsRecvChannel:
+				p.log.Debug("Spanreed proxy received a destination close request from a client")
+				kickErr := p.kickClient(kick.ClientId, kick.Reason)
+				if kickErr != nil {
+					p.log.Error("Error handling destination kick request", zap.Error(kickErr))
 				}
 			}
 		}
@@ -379,6 +433,58 @@ func (p *proxy) Start(ctx context.Context) {
 	// TODO (sessamekesh): Begin graceful shutdown procedure here (notify all connected clients and destinations of shutdown)
 }
 
+func (p *proxy) forwardClientMessage(msg handlers.ClientMessage) error {
+	deqTime := p.getNowTime()
+
+	destHandlerName, destHandlerErr := p.clientStore.GetDestinationHandlerName(msg.ClientId)
+	if destHandlerErr != nil {
+		return destHandlerErr
+	}
+
+	p.mut_outgoingDestinationMessageSendChannels.RLock()
+	sendChannels, has := p.outgoingDestinationMessageSendChannels[destHandlerName]
+	if !has {
+		return &MissingDestinationHandler{
+			Name: destHandlerName,
+		}
+	}
+
+	sendChannels.outgoingMessages <- handlers.DestinationMessage{
+		ClientId:       msg.ClientId,
+		RecvTimestamp:  msg.RecvTimestamp,
+		RouteTimestamp: deqTime,
+		Data:           msg.Data,
+	}
+
+	return nil
+}
+
+func (p *proxy) forwardDestinationMessage(msg handlers.DestinationMessage) error {
+	deqTime := p.getNowTime()
+
+	clientHandlerName, clientHandlerNameErr := p.clientStore.GetClientHandlerName(msg.ClientId)
+	if clientHandlerNameErr != nil {
+		return clientHandlerNameErr
+	}
+
+	p.mut_outgoingClientMessageChannels.RLock()
+	sendChannels, has := p.outgoingClientMessageChannels[clientHandlerName]
+	if !has {
+		return &MissingClientHandler{
+			Name: clientHandlerName,
+		}
+	}
+
+	sendChannels.outgoingMessages <- handlers.ClientMessage{
+		ClientId:       msg.ClientId,
+		RecvTimestamp:  msg.RecvTimestamp,
+		RouteTimestamp: deqTime,
+		Data:           msg.Data,
+	}
+
+	return nil
+}
+
 func (p *proxy) kickOldClients() {
 	clientMsgDeadline := p.getNowTime() - p.clientMessageTimeout.Microseconds()
 	destinationMsgDeadline := p.getNowTime() - p.destinationMessageTimeout.Microseconds()
@@ -410,18 +516,6 @@ func (p *proxy) checkForAuthTimeouts() {
 	}
 
 	for _, clientId := range clientsToTimeout {
-		cmErr := p.sendClientMessage(clientId, p.getNowTime(), p.getNowTime(), &spandestintationmsg.SpanreedDestinationMessage{
-			MagicNumber: p.magicNumber,
-			Version:     p.version,
-			MessageType: spandestintationmsg.SpanreedDestinationMessageType_ConnectionResponse,
-			ConnectionResponse: &spandestintationmsg.ConnectionResponse{
-				Verdict:   false,
-				IsTimeout: true,
-			},
-		})
-		if cmErr != nil {
-			p.log.Error("Error sending auth timeout message to client", zap.Uint32("clientId", clientId), zap.Error(cmErr))
-		}
 		kickErr := p.kickClient(clientId, &errors.AuthTimeout{})
 		if kickErr != nil {
 			p.log.Error("Error kicking auth rejected client", zap.Uint32("clientId", clientId), zap.Error(kickErr))
@@ -429,48 +523,9 @@ func (p *proxy) checkForAuthTimeouts() {
 	}
 }
 
-func (p *proxy) handleClientMessage(incomingMsg handlers.IncomingClientMessage) error {
-	p.log.Info("Handling client message", zap.Uint32("clientId", incomingMsg.ClientId))
-	if !p.clientStore.HasClient(incomingMsg.ClientId) {
-		return &internal.MissingClientIdError{
-			Id: incomingMsg.ClientId,
-		}
-	}
-
-	if incomingMsg.Message.MagicNumber != p.magicNumber || incomingMsg.Message.Version != p.version {
-		return &errors.InvalidHeaderVersion{
-			ExpectedMagicNumber: p.magicNumber,
-			ExpectedVersion:     p.version,
-			ActualMagicNumber:   incomingMsg.Message.MagicNumber,
-			ActualVersion:       incomingMsg.Message.Version,
-		}
-	}
-
-	switch incomingMsg.Message.MessageType {
-	case clientmsg.ClientMessageType_ConnectionRequest:
-		return p.handleClientConnectionRequestMessage(incomingMsg, incomingMsg.Message)
-	case clientmsg.ClientMessageType_AppMessage:
-		return p.handleClientAppMessage(incomingMsg, incomingMsg.Message)
-	case clientmsg.ClientMessageType_NONE:
-	default:
-		// fallthrough
-	}
-
-	return &errors.InvalidEnumValue{
-		EnumName: "IncomingClientMessage::Message::MessageType",
-		IntValue: 0xff,
-	}
-}
-
-func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.IncomingClientMessage, parsedMsg *clientmsg.ClientMessage) error {
+func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.OpenClientConnectionCommand) error {
+	p.log.Info("Handle client connection request message", zap.Uint32("clientId", incomingMsg.ClientId))
 	dequeTimestamp := p.getNowTime()
-
-	if parsedMsg.ConnectionRequest == nil {
-		return &errors.MissingFieldError{
-			MessageName: "IncomingClientMessage::Message",
-			FieldName:   "ConnectionRequest",
-		}
-	}
 
 	rsl, err := p.clientStore.GetDestinationHandlerName(incomingMsg.ClientId)
 	if err != nil {
@@ -486,7 +541,7 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.Incomi
 		p.mut_connectedDestinationHandlers.RLock()
 		defer p.mut_connectedDestinationHandlers.RUnlock()
 		for _, destinationHandler := range p.connectedDestinationHandlers {
-			if destinationHandler.MatchConnectionString(parsedMsg.ConnectionRequest.ConnectionString) {
+			if destinationHandler.MatchConnectionString(incomingMsg.ConnectionString) {
 				p.mut_outgoingDestinationMessageSendChannels.RLock()
 				defer p.mut_outgoingDestinationMessageSendChannels.RUnlock()
 
@@ -495,27 +550,18 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.Incomi
 					return &MissingDestinationHandler{Name: destinationHandler.Name}
 				}
 
-				spanreedMessage := &spanclientmsg.SpanreedClientMessage{
-					MagicNumber: p.magicNumber,
-					Version:     p.version,
-					MessageType: spanclientmsg.SpanreedClientMessageType_ConnectionRequest,
-					ConnectionRequest: &spanclientmsg.ConnectionRequest{
-						ClientId: incomingMsg.ClientId,
-					},
-					AppData: parsedMsg.AppData,
-				}
-
 				sdhErr := p.clientStore.SetDestinationHandlerName(incomingMsg.ClientId, destinationHandler.Name)
 				if sdhErr != nil {
 					p.log.Error("Error setting client destination handler name", zap.Uint32("clientId", incomingMsg.ClientId), zap.Error(sdhErr))
 					return sdhErr
 				}
-				destSendChannels.openConnectionsChannel <- handlers.OpenDestinationConnectionCommand{
-					ClientId:             incomingMsg.ClientId,
-					ConnectionRequestMsg: spanreedMessage,
-					ConnectionString:     parsedMsg.ConnectionRequest.ConnectionString,
-					RecvTime:             incomingMsg.RecvTime,
-					ProcessTime:          dequeTimestamp,
+
+				destSendChannels.openConnectionsChannel <- handlers.OpenClientConnectionCommand{
+					ClientId:         incomingMsg.ClientId,
+					RecvTimestamp:    incomingMsg.RecvTimestamp,
+					RouteTimestamp:   dequeTimestamp,
+					ConnectionString: incomingMsg.ConnectionString,
+					AppData:          incomingMsg.AppData,
 				}
 
 				return nil
@@ -523,7 +569,7 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.Incomi
 		}
 
 		return &NoMatchingHandlerForConnectionString{
-			ConnectionString: parsedMsg.ConnectionRequest.ConnectionString,
+			ConnectionString: incomingMsg.ConnectionString,
 		}
 	}()
 
@@ -532,134 +578,6 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.Incomi
 		p.kickClient(incomingMsg.ClientId, err)
 	}
 	return err
-}
-
-func (p *proxy) handleClientAppMessage(incomingMsg handlers.IncomingClientMessage, parsedMsg *clientmsg.ClientMessage) error {
-	return p.sendDestinationMessage(incomingMsg.ClientId, incomingMsg.RecvTime, p.getNowTime(), &spanclientmsg.SpanreedClientMessage{
-		MagicNumber: p.magicNumber,
-		Version:     p.version,
-		MessageType: spanclientmsg.SpanreedClientMessageType_AppMessage,
-		AppData:     parsedMsg.AppData,
-	})
-}
-
-func (p *proxy) sendDestinationMessage(clientId uint32, recvTime int64, deqTime int64, msg *spanclientmsg.SpanreedClientMessage) error {
-	if !p.clientStore.HasClient(clientId) {
-		return &internal.MissingClientIdError{
-			Id: clientId,
-		}
-	}
-
-	destName, destNameError := p.clientStore.GetDestinationHandlerName(clientId)
-	if destNameError != nil {
-		return destNameError
-	}
-
-	p.mut_outgoingDestinationMessageSendChannels.RLock()
-	defer p.mut_outgoingDestinationMessageSendChannels.RUnlock()
-
-	destSendChannels, has := p.outgoingDestinationMessageSendChannels[destName]
-	if !has {
-		return &MissingDestinationHandler{Name: destName}
-	}
-
-	destSendChannels.outgoingMessages <- handlers.OutgoingDestinationMessage{
-		ClientId:    clientId,
-		Message:     msg,
-		RecvTime:    recvTime,
-		ProcessTime: deqTime,
-	}
-
-	return nil
-}
-
-func (p *proxy) sendClientMessage(clientId uint32, recvTime int64, deqTime int64, msg *spandestintationmsg.SpanreedDestinationMessage) error {
-	clientHandlerName, clientHandlerNameError := p.clientStore.GetClientHandlerName(clientId)
-	if clientHandlerNameError != nil {
-		return clientHandlerNameError
-	}
-
-	p.mut_outgoingClientMessageChannels.RLock()
-	defer p.mut_outgoingClientMessageChannels.RUnlock()
-
-	clientSendChannels, has := p.outgoingClientMessageChannels[clientHandlerName]
-	if !has {
-		return &MissingClientHandler{Name: clientHandlerName}
-	}
-
-	clientSendChannels.outgoingMessages <- handlers.OutgoingClientMessage{
-		ClientId:    clientId,
-		Message:     msg,
-		RecvTime:    recvTime,
-		ProcessTime: deqTime,
-	}
-
-	return nil
-}
-
-func (p *proxy) handleDestinationMessage(incomingMsg handlers.IncomingDestinationMessage) error {
-	if !p.clientStore.HasClient(incomingMsg.ClientId) {
-		return &internal.MissingClientIdError{
-			Id: incomingMsg.ClientId,
-		}
-	}
-
-	if incomingMsg.Message.MagicNumber != p.magicNumber || incomingMsg.Message.Version != p.version {
-		return &errors.InvalidHeaderVersion{
-			ExpectedMagicNumber: p.magicNumber,
-			ExpectedVersion:     p.version,
-			ActualMagicNumber:   incomingMsg.Message.MagicNumber,
-			ActualVersion:       incomingMsg.Message.Version,
-		}
-	}
-
-	switch incomingMsg.Message.MessageType {
-	case destination.DestinationMessageType_ConnectionResponse:
-		return p.handleDestinationConnectionResponseMessage(incomingMsg)
-	case destination.DestinationMessageType_AppMessage:
-		return p.handleDestinationAppMessage(incomingMsg)
-	case destination.DestinationMessageType_NONE:
-	default:
-		// fallthrough
-	}
-
-	// TODO (sessamekesh): Handle them
-	return nil
-}
-
-func (p *proxy) handleDestinationConnectionResponseMessage(incomingMsg handlers.IncomingDestinationMessage) error {
-	processStartTimestamp := p.getNowTime()
-
-	if incomingMsg.Message.ConnectionResponse == nil {
-		return &errors.MissingFieldError{
-			MessageName: "IncomingDestinationMessage::Message",
-			FieldName:   "ConnectionResponse",
-		}
-	}
-
-	if !incomingMsg.Message.ConnectionResponse.Verdict {
-		// Kick the client after sending the message...
-		p.kickClient(incomingMsg.ClientId, &errors.ConnectionRefusedByDestination{})
-	}
-
-	p.sendClientMessage(incomingMsg.ClientId, incomingMsg.RecvTime, processStartTimestamp,
-		&spandestintationmsg.SpanreedDestinationMessage{
-			MagicNumber: p.magicNumber,
-			Version:     p.version,
-			MessageType: spandestintationmsg.SpanreedDestinationMessageType_ConnectionResponse,
-			ConnectionResponse: &spandestintationmsg.ConnectionResponse{
-				Verdict:   incomingMsg.Message.ConnectionResponse.Verdict,
-				IsTimeout: false,
-			},
-			AppData: incomingMsg.Message.AppData,
-		})
-
-	return nil
-}
-
-func (p *proxy) handleDestinationAppMessage(incomingMsg handlers.IncomingDestinationMessage) error {
-	// TODO (sessamekesh)
-	return nil
 }
 
 func (p *proxy) kickClient(clientId uint32, reason error) error {
@@ -712,7 +630,7 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 			return
 		}
 
-		destinationHandler.closeRequests <- handlers.DestinationCloseCommand{
+		destinationHandler.closeRequests <- handlers.ClientCloseCommand{
 			ClientId: clientId,
 			Reason:   reason,
 		}
@@ -720,5 +638,24 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 
 	p.clientStore.RemoveClient(clientId)
 
+	return nil
+}
+
+func (p *proxy) forwardDestinationVerdict(msg handlers.OpenClientConnectionVerdict) error {
+	p.log.Debug("Forwarding verdict", zap.Uint32("clientId", msg.ClientId), zap.Bool("verdict", msg.Verdict), zap.Error(msg.Error))
+	clientName, clientNameErr := p.clientStore.GetClientHandlerName(msg.ClientId)
+	if clientNameErr != nil {
+		return clientNameErr
+	}
+
+	p.mut_outgoingClientMessageChannels.RLock()
+	outgoingChannels, has := p.outgoingClientMessageChannels[clientName]
+	if !has {
+		return &MissingClientHandler{
+			Name: clientName,
+		}
+	}
+
+	outgoingChannels.connectionVerdicts <- msg
 	return nil
 }

@@ -1,0 +1,18 @@
+namespace SpanreedMessage;
+
+table ProxyMessage {
+  client_id: uint32;
+}
+
+table ConnectionVerdict {
+  client_id: uint32;
+  accepted: bool;
+}
+
+union InnerMsg { ProxyMessage, ConnectionVerdict }
+
+table DestinationMessage {
+  msg: InnerMsg;
+}
+
+root_type DestinationMessage;

@@ -9,18 +9,17 @@ import (
 	"sync"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/handlers"
+	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/transport/SpanreedMessage"
 	utils "github.com/sessamekesh/spanreed-netcode-proxy/pkg/util"
 	"go.uber.org/zap"
-
-	destinationmsg "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/destination"
-	spanreedclient "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/spanreed_client"
 )
 
 type udpSpanreedDestinationChannels struct {
 	Address          *net.UDPAddr
-	OutgoingMessages chan<- handlers.OutgoingDestinationMessage
-	CloseRequest     chan<- handlers.DestinationCloseCommand
+	OutgoingMessages chan<- handlers.ClientMessage
+	CloseRequest     chan<- handlers.ClientCloseCommand
 }
 
 type udpSpanreedDestination struct {
@@ -28,9 +27,6 @@ type udpSpanreedDestination struct {
 
 	log       *zap.Logger
 	stringGen *utils.RandomStringGenerator
-
-	destinationMessageSerializer    *destinationmsg.DestinationMessageSerializer
-	spanreedClientMessageSerializer *spanreedclient.SpanreedClientMessageSerializer
 
 	resolveUdpAddr  func(connStr string) (*net.UDPAddr, error)
 	proxyConnection *handlers.DestinationMessageHandler
@@ -57,6 +53,17 @@ type UdpSpanreedDestinationParams struct {
 	ResolveUdpAddress func(connStr string) (*net.UDPAddr, error)
 }
 
+func safeParseDestinationMessage(payload []byte) (msg *SpanreedMessage.DestinationMessage, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = nil
+			err = fmt.Errorf("deformed message: %v", err)
+		}
+	}()
+
+	return SpanreedMessage.GetRootAsDestinationMessage(payload, 0), nil
+}
+
 func DefaultUdpDestinationHandlerMatchConnectionStringFn(connStr string) bool {
 	return connStr[0:4] == "udp:"
 }
@@ -80,17 +87,9 @@ func CreateUdpDestinationHandler(proxyConnection *handlers.DestinationMessageHan
 	}
 
 	return &udpSpanreedDestination{
-		params:    params,
-		log:       logger.With(zap.String("handler", "udpDestination")),
-		stringGen: utils.CreateRandomstringGenerator(time.Now().UnixMicro()),
-		destinationMessageSerializer: &destinationmsg.DestinationMessageSerializer{
-			MagicNumber: params.MagicNumber,
-			Version:     params.Version,
-		},
-		spanreedClientMessageSerializer: &spanreedclient.SpanreedClientMessageSerializer{
-			MagicNumber: params.MagicNumber,
-			Version:     params.Version,
-		},
+		params:          params,
+		log:             logger.With(zap.String("handler", "udpDestination")),
+		stringGen:       utils.CreateRandomstringGenerator(time.Now().UnixMicro()),
 		resolveUdpAddr:  resolveUdpAddrFunc,
 		proxyConnection: proxyConnection,
 
@@ -149,7 +148,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 			}
 
 			rawMsg := buf[0:bytesRead]
-			parsedMsg, msgParseError := s.destinationMessageSerializer.Parse(rawMsg)
+			parsedMsg, msgParseError := safeParseDestinationMessage(rawMsg)
 			if msgParseError != nil {
 				s.log.Warn("Failed to parse incoming datagram", zap.Error(msgParseError))
 				continue
@@ -157,7 +156,24 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 
 			// TODO (sessamekesh): Handle parsed message correctly here!
 			// TODO (sessamekesh): That involves making sure that the destination server is at the right address!
-			s.log.Info("Parsed message received!", zap.Uint32("clientId", parsedMsg.ClientId), zap.String("clientAddr", clientAddr.String()))
+			ut := new(flatbuffers.Table)
+			if parsedMsg.Msg(ut) {
+				switch parsedMsg.MsgType() {
+				case SpanreedMessage.InnerMsgConnectionVerdict:
+					cv := new(SpanreedMessage.ConnectionVerdict)
+					cv.Init(ut.Bytes, ut.Pos)
+					// TODO (sessamekesh): Handle cv verdict
+					// TODO (sessamekesh): Make this safe!
+				case SpanreedMessage.InnerMsgProxyMessage:
+					pm := new(SpanreedMessage.ProxyMessage)
+					pm.Init(ut.Bytes, ut.Pos)
+					// TODO (sessamekesh): Handle this incoming message
+					// TODO (sessamekesh): Make this safe!
+				case SpanreedMessage.InnerMsgNONE:
+				default:
+					s.log.Warn("Unexpected message type from proxy, skipping", zap.String("clientAddr", clientAddr.String()))
+				}
+			}
 		}
 	}()
 
@@ -172,19 +188,16 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case openConnectionRequest := <-s.proxyConnection.ConnectionOpenRequests:
+			case openConnectionRequest := <-s.proxyConnection.OpenClientChannel:
 				s.log.Info("Connection open request", zap.Uint32("clientId", openConnectionRequest.ClientId), zap.String("connectionString", openConnectionRequest.ConnectionString))
 				err := s.onConnectClient(openConnectionRequest)
 				if err != nil {
 					s.log.Warn("Could not open destination connection for client", zap.Uint32("clientId", openConnectionRequest.ClientId), zap.Error(err))
 				}
-			case closeRequest := <-s.proxyConnection.CloseRequests:
+			case closeRequest := <-s.proxyConnection.IncomingCloseRequests:
 				s.log.Info("TODO: Handle close request", zap.Uint32("clientId", closeRequest.ClientId))
-			case msgRequest := <-s.proxyConnection.OutgoingDestinationMessageChannel:
-				err := s.onOutgoingMsg(msgRequest)
-				if err != nil {
-					s.log.Warn("Failed to forward message for client", zap.Uint32("clientId", msgRequest.ClientId), zap.Error(err))
-				}
+			case msgRequest := <-s.proxyConnection.OutgoingMessageChannel:
+				s.log.Info("TODO: Handle message request", zap.Uint32("clientId", msgRequest.ClientId))
 			}
 		}
 	}()
@@ -194,7 +207,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenDestinationConnectionCommand) error {
+func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenClientConnectionCommand) error {
 	log := s.log.With(zap.Uint32("clientId", outgoingMsg.ClientId))
 	udpAddr, udpAddrErr := s.resolveUdpAddr(outgoingMsg.ConnectionString)
 	if udpAddrErr != nil {
@@ -202,12 +215,8 @@ func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenDestin
 		return udpAddrErr
 	}
 
-	// TODO (sessamekesh): This
+	// TODO (sessamekesh): Finish this
 	log.Info("UDP addr", zap.String("udpAddr", udpAddr.String()))
 
-	return nil
-}
-
-func (s *udpSpanreedDestination) onOutgoingMsg(_ handlers.OutgoingDestinationMessage) error {
 	return nil
 }

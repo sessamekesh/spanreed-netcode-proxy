@@ -1,0 +1,8 @@
+namespace SpanreedMessage;
+
+table ConnectClientMessage {
+  connection_string: string;
+  app_data: [ubyte];
+}
+
+root_type ConnectClientMessage;

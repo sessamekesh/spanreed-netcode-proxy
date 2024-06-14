@@ -5,8 +5,12 @@ type ClientMessageHandler struct {
 	GetNextClientId func() (uint32, error)
 	GetNowTimestamp func() int64
 
-	IncomingClientMessageChannel chan<- IncomingClientMessage
-	OutgoingClientMessageChannel <-chan OutgoingClientMessage
+	OpenClientChannel        chan<- OpenClientConnectionCommand
+	OpenClientVerdictChannel <-chan OpenClientConnectionVerdict
 
-	CloseRequests <-chan ClientCloseCommand
+	IncomingMessageChannel chan<- ClientMessage
+	OutgoingMessageChannel <-chan ClientMessage
+
+	OutgoingCloseRequests chan<- ClientCloseCommand
+	IncomingCloseRequests <-chan ClientCloseCommand
 }

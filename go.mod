@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
 )

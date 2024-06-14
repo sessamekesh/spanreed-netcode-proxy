@@ -1,0 +1,10 @@
+namespace SpanreedMessage;
+
+table ConnectDestinationVerdict {
+  client_id: uint32;
+  accepted: bool;
+  error_reason: string;
+  app_data: [ubyte];
+}
+
+root_type ConnectDestinationVerdict;

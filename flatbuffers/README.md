@@ -1,0 +1,1 @@
+Flatbuffer files used for messaging with default WebSocket backend

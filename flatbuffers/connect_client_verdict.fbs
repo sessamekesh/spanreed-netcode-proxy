@@ -1,0 +1,9 @@
+namespace SpanreedMessage;
+
+table ConnectClientVerdict {
+  accepted: bool;
+  error_reason: string;
+  app_data: [ubyte];
+}
+
+root_type ConnectClientVerdict;

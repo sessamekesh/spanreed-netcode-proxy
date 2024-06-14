@@ -3,32 +3,31 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/gorilla/websocket"
 	"github.com/sessamekesh/spanreed-netcode-proxy/internal"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/handlers"
-	clientmsg "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/client"
-	spanreeddestination "github.com/sessamekesh/spanreed-netcode-proxy/pkg/message/spanreed_destination"
+	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/transport/SpanreedMessage"
 	utils "github.com/sessamekesh/spanreed-netcode-proxy/pkg/util"
 	"go.uber.org/zap"
 )
 
 type wsConnectionChannels struct {
-	OutgoingMessages chan<- handlers.OutgoingClientMessage
+	OutgoingMessages chan<- handlers.ClientMessage
 	CloseRequest     chan<- handlers.ClientCloseCommand
+	Verdict          chan<- handlers.OpenClientConnectionVerdict
 }
 
 type websocketSpanreedClient struct {
 	upgrader *websocket.Upgrader
 
 	params WebsocketSpanreedClientParams
-
-	clientMessageSerializer   clientmsg.ClientMessageSerializer
-	spanreedMessageSerializer spanreeddestination.SpanreedDestinationMessageSerializer
 
 	proxyConnection *handlers.ClientMessageHandler
 
@@ -67,6 +66,12 @@ func checkOrigin(r *http.Request, params WebsocketSpanreedClientParams) bool {
 	return utils.Contains(origin, params.AllowlistedHosts)
 }
 
+type NonBinaryMessage struct{}
+
+func (m *NonBinaryMessage) Error() string {
+	return "Non binary message received"
+}
+
 func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, params WebsocketSpanreedClientParams) (*websocketSpanreedClient, error) {
 	// TODO (sessamekesh): Validation that necessary parameters exist, if any.
 	logger := params.Logger
@@ -81,15 +86,7 @@ func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, para
 			},
 			// TODO (sessamekesh): read/write buffer size params
 		},
-		params: params,
-		clientMessageSerializer: clientmsg.ClientMessageSerializer{
-			MagicNumber: params.MagicNumber,
-			Version:     params.Version,
-		},
-		spanreedMessageSerializer: spanreeddestination.SpanreedDestinationMessageSerializer{
-			MagicNumber: params.MagicNumber,
-			Version:     params.Version,
-		},
+		params:          params,
 		proxyConnection: proxyConnection,
 
 		mut_connections: sync.RWMutex{},
@@ -100,20 +97,31 @@ func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, para
 	}, nil
 }
 
-func (ws *websocketSpanreedClient) sendSpanreedMessage(c *websocket.Conn, log *zap.Logger, msg *spanreeddestination.SpanreedDestinationMessage) {
-	serializedMsg, serializeErr := ws.spanreedMessageSerializer.Serialize(msg)
-	if serializeErr != nil {
-		log.Error("Failed to serialize Spanreed client message", zap.Error(serializeErr))
+func safeParseConnectClientMessage(payload []byte) (msg *SpanreedMessage.ConnectClientMessage, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = nil
+			err = fmt.Errorf("deformed message: %v", err)
+		}
+	}()
+
+	return SpanreedMessage.GetRootAsConnectClientMessage(payload, 0), nil
+}
+
+func (ws *websocketSpanreedClient) readAuthMessage(c *websocket.Conn) (*SpanreedMessage.ConnectClientMessage, error) {
+	msgType, payload, msgErr := c.ReadMessage()
+	if msgErr != nil {
+		return nil, msgErr
 	}
 
-	sendErr := c.WriteMessage(websocket.BinaryMessage, serializedMsg)
-	if sendErr != nil {
-		log.Error("Failed to send Spanreed message to client", zap.Error(sendErr))
+	if msgType != websocket.BinaryMessage {
+		return nil, &NonBinaryMessage{}
 	}
+
+	return safeParseConnectClientMessage(payload)
 }
 
 func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	// TODO (sessamekesh): Logging with ID
 	log := ws.log.With(
 		zap.String("wsConnId", ws.stringGen.GetRandomString(6)),
 	)
@@ -121,7 +129,6 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 	log.Info("New WebSocket request")
 	c, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		// TODO (sessamekesh): Logging
 		log.Error("Failed to upgrade HTTP request to WebSocket connection", zap.Error(err))
 		return
 	}
@@ -132,15 +139,7 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 
 	clientId, err := ws.proxyConnection.GetNextClientId()
 	if err != nil {
-		ws.sendSpanreedMessage(c, log, &spanreeddestination.SpanreedDestinationMessage{
-			MessageType: spanreeddestination.SpanreedDestinationMessageType_ConnectionResponse,
-			ConnectionResponse: &spanreeddestination.ConnectionResponse{
-				Verdict:      false,
-				IsTimeout:    false,
-				IsProxyError: true,
-			},
-		})
-
+		// TODO (sessamekesh): Send error response
 		log.Error("Failed to generate client ID for new connection", zap.Error(err))
 		return
 	}
@@ -148,8 +147,9 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 	log = log.With(zap.Uint32("clientId", clientId))
 
 	// TODO (sessamekesh): Buffer these channels based on config!
-	outgoingMessages := make(chan handlers.OutgoingClientMessage, 16)
+	outgoingMessages := make(chan handlers.ClientMessage, 16)
 	closeRequest := make(chan handlers.ClientCloseCommand, 1)
+	verdict := make(chan handlers.OpenClientConnectionVerdict, 1)
 
 	err = func() error {
 		ws.mut_connections.Lock()
@@ -164,6 +164,7 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 		ws.connections[clientId] = &wsConnectionChannels{
 			OutgoingMessages: outgoingMessages,
 			CloseRequest:     closeRequest,
+			Verdict:          verdict,
 		}
 
 		log.Debug("Added client to WebSocket handler connections map")
@@ -173,14 +174,7 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 
 	if err != nil {
 		log.Error("Failed to establish Go channels for new client", zap.Error(err))
-		ws.sendSpanreedMessage(c, log, &spanreeddestination.SpanreedDestinationMessage{
-			MessageType: spanreeddestination.SpanreedDestinationMessageType_ConnectionResponse,
-			ConnectionResponse: &spanreeddestination.ConnectionResponse{
-				Verdict:      false,
-				IsTimeout:    false,
-				IsProxyError: true,
-			},
-		})
+		// TODO (sessamekesh): Send error back over to client
 		return
 	}
 
@@ -191,37 +185,54 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 		log.Debug("Removed client from WebSocket handler connections map")
 	}()
 
+	// TODO (sessamekesh): Read a single message from the client, expect it to be a connection request message
+	authMsg, err := ws.readAuthMessage(c)
+	if err != nil {
+		log.Error("Error reading auth message", zap.Error(err))
+		return
+	}
+
+	// TODO (sessamekesh): Make reading flatbuffer data safe! It could panic!!!
+	ws.proxyConnection.OpenClientChannel <- handlers.OpenClientConnectionCommand{
+		ClientId:         clientId,
+		RecvTimestamp:    ws.proxyConnection.GetNowTimestamp(),
+		ConnectionString: string(authMsg.ConnectionString()),
+		AppData:          authMsg.AppDataBytes(),
+	}
+
 	// Expect an auth message back, handle it specifically!
 	select {
 	case <-ctx.Done():
-	case <-closeRequest:
-		// TODO (sessamekesh): Handle graceful shutdown here (with auth section specific logic)
-		ws.sendSpanreedMessage(c, log, &spanreeddestination.SpanreedDestinationMessage{
-			MessageType: spanreeddestination.SpanreedDestinationMessageType_ConnectionResponse,
-			ConnectionResponse: &spanreeddestination.ConnectionResponse{
-				Verdict:      false,
-				IsTimeout:    true,
-				IsProxyError: false,
-			},
-		})
 		return
-	case authMsg := <-outgoingMessages:
-		if authMsg.Message.MessageType != spanreeddestination.SpanreedDestinationMessageType_ConnectionResponse || authMsg.Message.ConnectionResponse == nil {
-			log.Warn("Non-auth message received from Spanreed proxy, rejecting client connection")
-			ws.sendSpanreedMessage(c, log, &spanreeddestination.SpanreedDestinationMessage{
-				MessageType: spanreeddestination.SpanreedDestinationMessageType_ConnectionResponse,
-				ConnectionResponse: &spanreeddestination.ConnectionResponse{
-					Verdict:      false,
-					IsTimeout:    false,
-					IsProxyError: true,
-				},
-			})
-			return
+	case <-closeRequest:
+		log.Warn("Auth timeout")
+		b := flatbuffers.NewBuilder(64)
+		SpanreedMessage.ConnectClientVerdictStart(b)
+		SpanreedMessage.ConnectClientVerdictAddAccepted(b, false)
+		SpanreedMessage.ConnectClientVerdictAddErrorReason(b, b.CreateString("Authorization timed out"))
+		msg := SpanreedMessage.ConnectClientVerdictEnd(b)
+		b.Finish(msg)
+		buf := b.FinishedBytes()
+		c.WriteMessage(websocket.BinaryMessage, buf)
+		// TODO (sessamekesh): Handle graceful shutdown here (with auth section specific logic)
+		return
+	case verdictMsg := <-verdict:
+		b := flatbuffers.NewBuilder(64)
+		SpanreedMessage.ConnectClientVerdictStart(b)
+		SpanreedMessage.ConnectClientVerdictAddAccepted(b, verdictMsg.Verdict)
+		if verdictMsg.Error != nil {
+			SpanreedMessage.ConnectClientVerdictAddErrorReason(b, b.CreateString("Proxy error"))
 		}
+		if verdictMsg.AppData != nil {
+			SpanreedMessage.ConnectClientVerdictAddAppData(b, b.CreateByteVector(verdictMsg.AppData))
+		}
+		msg := SpanreedMessage.ConnectClientVerdictEnd(b)
+		b.Finish(msg)
+		buf := b.FinishedBytes()
+		c.WriteMessage(websocket.BinaryMessage, buf)
 
-		ws.sendSpanreedMessage(c, log, authMsg.Message)
-		log.Info("Auth verdict received", zap.Bool("verdict", authMsg.Message.ConnectionResponse.Verdict))
-		if !authMsg.Message.ConnectionResponse.Verdict {
+		if !verdictMsg.Verdict {
+			log.Warn("Client connection refused", zap.Error(verdictMsg.Error))
 			return
 		}
 	}
@@ -238,12 +249,12 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 			case <-ctx.Done():
 			case <-closeRequest:
 				log.Info("Spanreed proxy listener goroutine attempting graceful shutdown")
-				// TODO (sessamekesh): Handle graceful shutdown here
+				// TODO (sessamekesh): Handle graceful shutdown here, send message back to client
 				c.Close()
 				return
 			case logicalMessage := <-outgoingMessages:
-				log.Info("Received message from proxy, forwarding to client", zap.Int("app_data_size", len(logicalMessage.Message.AppData)))
-				ws.sendSpanreedMessage(c, log, logicalMessage.Message)
+				log.Info("Received message from proxy, forwarding to client", zap.Int("app_data_size", len(logicalMessage.Data)))
+				c.WriteMessage(websocket.BinaryMessage, logicalMessage.Data)
 			}
 		}
 	}()
@@ -287,17 +298,10 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 				continue
 			}
 
-			parsedMsg, parsedMsgErr := ws.clientMessageSerializer.Parse(payload)
-			if parsedMsgErr != nil {
-				log.Info("Failed to parse message from client", zap.Error(parsedMsgErr))
-				// TODO (sessamekesh): Log error, maybe send a message back to the client?
-				continue
-			}
-
-			ws.proxyConnection.IncomingClientMessageChannel <- handlers.IncomingClientMessage{
-				ClientId: clientId,
-				RecvTime: ws.proxyConnection.GetNowTimestamp(),
-				Message:  parsedMsg,
+			ws.proxyConnection.IncomingMessageChannel <- handlers.ClientMessage{
+				ClientId:      clientId,
+				RecvTimestamp: ws.proxyConnection.GetNowTimestamp(),
+				Data:          payload,
 			}
 		}
 	}()
@@ -358,9 +362,9 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case closeRequest := <-ws.proxyConnection.CloseRequests:
+			case closeRequest := <-ws.proxyConnection.IncomingCloseRequests:
 				ws.handleProxyCloseRequest(closeRequest)
-			case msgRequest := <-ws.proxyConnection.OutgoingClientMessageChannel:
+			case msgRequest := <-ws.proxyConnection.OutgoingMessageChannel:
 				ws.handleOutgoingMessageRequest(msgRequest)
 			}
 		}
@@ -389,7 +393,7 @@ func (ws *websocketSpanreedClient) handleProxyCloseRequest(closeRequest handlers
 	route.CloseRequest <- closeRequest
 }
 
-func (ws *websocketSpanreedClient) handleOutgoingMessageRequest(msgRequest handlers.OutgoingClientMessage) {
+func (ws *websocketSpanreedClient) handleOutgoingMessageRequest(msgRequest handlers.ClientMessage) {
 	ws.mut_connections.RLock()
 	defer ws.mut_connections.RUnlock()
 
