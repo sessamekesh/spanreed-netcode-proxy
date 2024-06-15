@@ -3,8 +3,6 @@
 #include <iostream>
 #include <unordered_map>
 
-#include "../../../external/parsers/cpp/spanreedmsg.hpp";
-
 #include <messages/server_message_generated.h>
 #include <messages/client_message_generated.h>
 
