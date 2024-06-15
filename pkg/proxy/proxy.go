@@ -531,7 +531,7 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.OpenCl
 	if err != nil {
 		return err
 	}
-	if err == nil && rsl != "" {
+	if rsl != "" {
 		// No-op, this is a duplicate connection request, do not re-establish
 		p.log.Warn("Unexpected duplicate client ID connection request, ignoring.", zap.Uint32("clientId", incomingMsg.ClientId))
 		return nil
