@@ -1,15 +1,19 @@
 #include <WinSock2.h>
-
-#include <iostream>
-#include <unordered_map>
-
-#include <messages/server_message_generated.h>
+#include <concurrentqueue.h>
 #include <messages/client_message_generated.h>
+#include <messages/server_message_generated.h>
+
+#include <chrono>
+#include <iostream>
+#include <thread>
+#include <unordered_map>
 
 struct ConnectedClient {
   sockaddr_in spanreed_client_addr{};  // Will probably be the same for all
                                        // connected clients...
   std::uint32_t spanreed_client_id{};
+
+  std::uint64_t last_send_time{};
 };
 
 struct DrawnDot {
@@ -25,7 +29,17 @@ struct WorldState {
 int main() {
   std::unordered_map<std::uint32_t, ConnectedClient> connected_clients{};
 
+  auto client_message_queue = std::make_unique<
+      moodycamel::ConcurrentQueue<HelloSpanreed::ClientMessage>>();
+
   std::cout << "-------- Hello Spanreed UDP Server --------" << std::endl;
+
+  auto tp_start = std::chrono::high_resolution_clock::now();
+  auto get_timestamp = [tp_start]() {
+    auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now - tp_start)
+        .count();
+  };
 
   WSADATA wsa{};
   if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
@@ -55,28 +69,41 @@ int main() {
 
   std::cout << "Listening on port 30001!" << std::endl;
 
-  while (true) {
-    constexpr size_t BUFLEN = 1024;
-    char message[BUFLEN] = {};
+  bool bRunning = true;
+  std::thread t([&bRunning, &server_socket]() {
+    while (bRunning) {
+      constexpr size_t BUFLEN = 1024;
+      char message[BUFLEN] = {};
 
-    int message_len;
-    int slen = sizeof(sockaddr_in);
-    sockaddr_in recv_addr{};
-    if ((message_len = recvfrom(server_socket, message, BUFLEN, 0x0,
-                                (sockaddr*)&recv_addr, &slen)) ==
-        SOCKET_ERROR) {
-      std::cout << "recvfrom() failed with error code: " << WSAGetLastError()
-                << std::endl;
-      return -1;
+      int message_len;
+      int slen = sizeof(sockaddr_in);
+      sockaddr_in recv_addr{};
+      if ((message_len = recvfrom(server_socket, message, BUFLEN, 0x0,
+                                  (sockaddr*)&recv_addr, &slen)) ==
+          SOCKET_ERROR) {
+        std::cout << "recvfrom() failed with error code: " << WSAGetLastError()
+                  << std::endl;
+        return -1;
+      }
+
+      std::cout << "Received packet (" << message_len << " bytes) from "
+                << inet_ntoa(recv_addr.sin_addr) << " "
+                << ntohs(recv_addr.sin_port) << std::endl;
+
+      // TODO (sessamekesh): C++ parser for various messages, connection flow
+      // for existing connections, otherwise broadcast to connected clients
     }
+  });
 
-    std::cout << "Received packet (" << message_len << " bytes) from "
-              << inet_ntoa(recv_addr.sin_addr) << " "
-              << ntohs(recv_addr.sin_port) << std::endl;
-
-    // TODO (sessamekesh): C++ parser for various messages, connection flow for
-    // existing connections, otherwise broadcast to connected clients
+  while (bRunning) {
+    // TODO (sessamekesh): Handle incoming messages
+    //  - Add new dots to sim
+    //  - Append list of messages to broadcast
+    // TODO (sessamekesh): Lifetime expire dots
+    // TODO (sessamekesh): Broadcast messages to clients
   }
+
+  t.join();
 
   return 0;
 }

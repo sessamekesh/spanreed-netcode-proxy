@@ -1,8 +1,0 @@
-namespace SpanreedMessage;
-
-table ConnectDestinationMessage {
-  client_id: uint32;
-  app_data: [ubyte];
-}
-
-root_type ConnectDestinationMessage;

@@ -206,9 +206,10 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 					s.log.Warn("Could not open destination connection for client", zap.Uint32("clientId", openConnectionRequest.ClientId), zap.Error(err))
 				}
 			case closeRequest := <-s.proxyConnection.IncomingCloseRequests:
-				s.log.Info("TODO: Handle close request", zap.Uint32("clientId", closeRequest.ClientId))
+				s.log.Info("Handle close request", zap.Uint32("clientId", closeRequest.ClientId))
+				s.onProxyRequestClose(closeRequest)
 			case msgRequest := <-s.proxyConnection.OutgoingMessageChannel:
-				s.log.Info("TODO: Handle message request", zap.Uint32("clientId", msgRequest.ClientId))
+				s.onClientMessage(msgRequest)
 			}
 		}
 	}()
@@ -255,16 +256,97 @@ func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenClient
 	}()
 
 	b := flatbuffers.NewBuilder(64 + len(outgoingMsg.AppData))
-	SpanreedMessage.ConnectDestinationMessageStart(b)
-	SpanreedMessage.ConnectDestinationMessageAddClientId(b, outgoingMsg.ClientId)
+	// Inner message
+	SpanreedMessage.ProxyDestConnectionRequestStart(b)
+	SpanreedMessage.ProxyDestConnectionRequestAddClientId(b, outgoingMsg.ClientId)
+	inner_msg := SpanreedMessage.ProxyDestConnectionRequestEnd(b)
+
+	SpanreedMessage.ProxyDestinationMessageStart(b)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestConnectionRequest)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
 	if outgoingMsg.AppData != nil {
-		SpanreedMessage.ConnectDestinationMessageAddAppData(b, b.CreateByteVector(outgoingMsg.AppData))
+		SpanreedMessage.ProxyDestinationMessageAddAppData(b, b.CreateByteVector(outgoingMsg.AppData))
 	}
-	cmsg := SpanreedMessage.ConnectDestinationMessageEnd(b)
+	cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
 	b.Finish(cmsg)
 	buf := b.FinishedBytes()
 	s.outgoingMessages <- outgoingMessage{
 		addr:    udpAddr,
+		payload: buf,
+	}
+
+	return nil
+}
+
+func (s *udpSpanreedDestination) onClientMessage(msg handlers.DestinationMessage) error {
+	addr := func() *net.UDPAddr {
+		s.mut_destinationConnections.RLock()
+		defer s.mut_destinationConnections.RUnlock()
+
+		addr, has := s.destinationConnections[msg.ClientId]
+		if !has {
+			return nil
+		}
+		return addr.Address
+	}()
+	if addr == nil {
+		s.log.Warn("Cannot forward message, no client address found", zap.Uint32("clientId", msg.ClientId))
+		// TODO (sessamekesh): Error state here instead
+		return nil
+	}
+
+	b := flatbuffers.NewBuilder(64 + len(msg.Data))
+	SpanreedMessage.ProxyDestClientMessageStart(b)
+	SpanreedMessage.ProxyDestClientMessageAddClientId(b, msg.ClientId)
+	inner_msg := SpanreedMessage.ProxyDestClientMessageEnd(b)
+
+	SpanreedMessage.ProxyDestinationMessageStart(b)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestClientMessage)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
+	if msg.Data != nil {
+		SpanreedMessage.ProxyDestinationMessageAddAppData(b, b.CreateByteVector(msg.Data))
+	}
+	cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
+	b.Finish(cmsg)
+	buf := b.FinishedBytes()
+	s.outgoingMessages <- outgoingMessage{
+		addr:    addr,
+		payload: buf,
+	}
+
+	return nil
+}
+
+func (s *udpSpanreedDestination) onProxyRequestClose(msg handlers.ClientCloseCommand) error {
+	addr := func() *net.UDPAddr {
+		s.mut_destinationConnections.RLock()
+		defer s.mut_destinationConnections.RUnlock()
+
+		addr, has := s.destinationConnections[msg.ClientId]
+		if !has {
+			return nil
+		}
+		return addr.Address
+	}()
+	if addr == nil {
+		s.log.Warn("Cannot forward message, no client address found", zap.Uint32("clientId", msg.ClientId))
+		// TODO (sessamekesh): Error state here instead
+		return nil
+	}
+
+	b := flatbuffers.NewBuilder(64)
+	SpanreedMessage.ProxyDestCloseConnectionStart(b)
+	SpanreedMessage.ProxyDestCloseConnectionAddClientId(b, msg.ClientId)
+	inner_msg := SpanreedMessage.ProxyDestCloseConnectionEnd(b)
+
+	SpanreedMessage.ProxyDestinationMessageStart(b)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestCloseConnection)
+	SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
+	cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
+	b.Finish(cmsg)
+	buf := b.FinishedBytes()
+	s.outgoingMessages <- outgoingMessage{
+		addr:    addr,
 		payload: buf,
 	}
 

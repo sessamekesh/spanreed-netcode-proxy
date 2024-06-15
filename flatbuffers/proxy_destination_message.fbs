@@ -1,0 +1,22 @@
+namespace SpanreedMessage;
+
+table ProxyDestConnectionRequest {
+  client_id: uint32;
+}
+
+table ProxyDestClientMessage {
+  client_id: uint32;
+}
+
+table ProxyDestCloseConnection {
+  client_id: uint32;
+}
+
+union ProxyDestInnerMsg { ProxyDestConnectionRequest, ProxyDestClientMessage, ProxyDestCloseConnection }
+
+table ProxyDestinationMessage {
+  inner_message: ProxyDestInnerMsg;
+  app_data: [ubyte];
+}
+
+root_type ProxyDestinationMessage;
