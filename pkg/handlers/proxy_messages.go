@@ -21,6 +21,7 @@ type ClientCloseCommand struct {
 	ClientId uint32
 	Reason   string
 	Error    error
+	AppData  []byte
 }
 
 //

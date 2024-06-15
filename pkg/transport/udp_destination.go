@@ -321,5 +321,6 @@ func (s *udpSpanreedDestination) onReceiveCloseRequest(msg *SpanreedMessage.Clos
 		ClientId: msg.ClientId(),
 		Reason:   string(msg.Reason()),
 		Error:    nil,
+		AppData:  appData,
 	}
 }
