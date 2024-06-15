@@ -2,7 +2,6 @@ package transport
 
 import (
 	"context"
-	"errors"
 	goerrs "errors"
 	"fmt"
 	"net"
@@ -145,7 +144,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 			var buf [2048]byte
 			bytesRead, clientAddr, err := conn.ReadFromUDP(buf[0:])
 			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
+				if goerrs.Is(err, net.ErrClosed) {
 					s.log.Info("UDP server connection close requested - exiting connection message listening goroutine")
 					return
 				} else {
