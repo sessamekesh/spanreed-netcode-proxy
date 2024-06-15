@@ -19,7 +19,8 @@ type OpenClientConnectionVerdict struct {
 
 type ClientCloseCommand struct {
 	ClientId uint32
-	Reason   error
+	Reason   string
+	Error    error
 }
 
 //

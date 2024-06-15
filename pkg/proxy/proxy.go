@@ -365,7 +365,7 @@ func (p *proxy) Start(ctx context.Context) {
 				}
 			case closeRequest := <-p.incomingClientCloseRequestsRecvChannel:
 				p.log.Debug("Spanreed proxy received a client close request from a client")
-				kickErr := p.kickClient(closeRequest.ClientId, closeRequest.Reason)
+				kickErr := p.kickClient(closeRequest.ClientId, closeRequest.Error)
 				if kickErr != nil {
 					p.log.Error("Error handling client kick request", zap.Error(kickErr))
 				}
@@ -397,7 +397,7 @@ func (p *proxy) Start(ctx context.Context) {
 				}
 			case kick := <-p.incomingDestinationCloseRequestsRecvChannel:
 				p.log.Debug("Spanreed proxy received a destination close request from a client")
-				kickErr := p.kickClient(kick.ClientId, kick.Reason)
+				kickErr := p.kickClient(kick.ClientId, kick.Error)
 				if kickErr != nil {
 					p.log.Error("Error handling destination kick request", zap.Error(kickErr))
 				}
@@ -610,7 +610,7 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 
 		clientHandler.closeRequests <- handlers.ClientCloseCommand{
 			ClientId: clientId,
-			Reason:   reason,
+			Error:    reason,
 		}
 	}()
 
@@ -632,7 +632,7 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 
 		destinationHandler.closeRequests <- handlers.ClientCloseCommand{
 			ClientId: clientId,
-			Reason:   reason,
+			Error:    reason,
 		}
 	}()
 

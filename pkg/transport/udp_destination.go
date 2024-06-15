@@ -17,9 +17,12 @@ import (
 )
 
 type udpSpanreedDestinationChannels struct {
-	Address          *net.UDPAddr
-	OutgoingMessages chan<- handlers.ClientMessage
-	CloseRequest     chan<- handlers.ClientCloseCommand
+	Address *net.UDPAddr
+}
+
+type outgoingMessage struct {
+	addr    *net.UDPAddr
+	payload []byte
 }
 
 type udpSpanreedDestination struct {
@@ -33,6 +36,8 @@ type udpSpanreedDestination struct {
 
 	mut_destinationConnections sync.RWMutex
 	destinationConnections     map[uint32]*udpSpanreedDestinationChannels
+
+	outgoingMessages chan outgoingMessage
 }
 
 type UdpSpanreedDestinationParams struct {
@@ -95,6 +100,8 @@ func CreateUdpDestinationHandler(proxyConnection *handlers.DestinationMessageHan
 
 		mut_destinationConnections: sync.RWMutex{},
 		destinationConnections:     make(map[uint32]*udpSpanreedDestinationChannels),
+
+		outgoingMessages: make(chan outgoingMessage, 128), // TODO (sessamekesh): Config for length
 	}, nil
 }
 
@@ -124,7 +131,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	// Connection closing goroutine
 	wg.Add(1)
 	go func() {
-		wg.Done()
+		defer wg.Done()
 		<-ctx.Done()
 		conn.Close()
 	}()
@@ -133,9 +140,9 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	// Connection message listening goroutine
 	wg.Add(1)
 	go func() {
-		wg.Done()
+		defer wg.Done()
 		for {
-			var buf [1400]byte
+			var buf [2048]byte
 			bytesRead, clientAddr, err := conn.ReadFromUDP(buf[0:])
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
@@ -162,12 +169,17 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 				case SpanreedMessage.InnerMsgConnectionVerdict:
 					cv := new(SpanreedMessage.ConnectionVerdict)
 					cv.Init(ut.Bytes, ut.Pos)
-					// TODO (sessamekesh): Handle cv verdict
+					s.onReceiveVerdict(cv, parsedMsg.AppDataBytes())
 					// TODO (sessamekesh): Make this safe!
 				case SpanreedMessage.InnerMsgProxyMessage:
 					pm := new(SpanreedMessage.ProxyMessage)
 					pm.Init(ut.Bytes, ut.Pos)
-					// TODO (sessamekesh): Handle this incoming message
+					s.onReceiveProxyMessage(pm, parsedMsg.AppDataBytes())
+					// TODO (sessamekesh): Make this safe!
+				case SpanreedMessage.InnerMsgCloseConnection:
+					cr := new(SpanreedMessage.CloseConnection)
+					cr.Init(ut.Bytes, ut.Pos)
+					s.onReceiveCloseRequest(cr, parsedMsg.AppDataBytes())
 					// TODO (sessamekesh): Make this safe!
 				case SpanreedMessage.InnerMsgNONE:
 				default:
@@ -181,7 +193,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	// Proxy message listener goroutine
 	wg.Add(1)
 	go func() {
-		wg.Done()
+		defer wg.Done()
 		s.log.Info("Starting UDP proxy message goroutine loop")
 
 		for {
@@ -202,6 +214,22 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 		}
 	}()
 
+	//
+	// Message sending goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.log.Info("Starting UDP proxy destination message dispatch loop")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case outgoingMessage := <-s.outgoingMessages:
+				conn.WriteToUDP(outgoingMessage.payload, outgoingMessage.addr)
+			}
+		}
+	}()
+
 	wg.Wait()
 
 	return nil
@@ -215,8 +243,83 @@ func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenClient
 		return udpAddrErr
 	}
 
-	// TODO (sessamekesh): Finish this
-	log.Info("UDP addr", zap.String("udpAddr", udpAddr.String()))
+	log.Info("Attempting connection to UDP addr", zap.String("udpAddr", udpAddr.String()))
+
+	destinationChannels := &udpSpanreedDestinationChannels{
+		Address: udpAddr,
+	}
+	func() {
+		s.mut_destinationConnections.Lock()
+		defer s.mut_destinationConnections.Unlock()
+
+		s.destinationConnections[outgoingMsg.ClientId] = destinationChannels
+	}()
+
+	b := flatbuffers.NewBuilder(64 + len(outgoingMsg.AppData))
+	SpanreedMessage.ConnectDestinationMessageStart(b)
+	SpanreedMessage.ConnectDestinationMessageAddClientId(b, outgoingMsg.ClientId)
+	if outgoingMsg.AppData != nil {
+		SpanreedMessage.ConnectDestinationMessageAddAppData(b, b.CreateByteVector(outgoingMsg.AppData))
+	}
+	cmsg := SpanreedMessage.ConnectDestinationMessageEnd(b)
+	b.Finish(cmsg)
+	buf := b.FinishedBytes()
+	s.outgoingMessages <- outgoingMessage{
+		addr:    udpAddr,
+		payload: buf,
+	}
 
 	return nil
+}
+
+func (s *udpSpanreedDestination) onReceiveVerdict(msg *SpanreedMessage.ConnectionVerdict, appData []byte) {
+	s.mut_destinationConnections.RLock()
+	defer s.mut_destinationConnections.RUnlock()
+
+	_, has := s.destinationConnections[msg.ClientId()]
+	if !has {
+		s.log.Warn("Received a verdict for a client that's not registered", zap.Uint32("clientId", msg.ClientId()))
+		return
+	}
+
+	s.proxyConnection.OpenClientVerdictChannel <- handlers.OpenClientConnectionVerdict{
+		ClientId: msg.ClientId(),
+		Verdict:  msg.Accepted(),
+		AppData:  appData,
+		Error:    nil,
+	}
+}
+
+func (s *udpSpanreedDestination) onReceiveProxyMessage(msg *SpanreedMessage.ProxyMessage, appData []byte) {
+	s.mut_destinationConnections.RLock()
+	defer s.mut_destinationConnections.RUnlock()
+
+	_, has := s.destinationConnections[msg.ClientId()]
+	if !has {
+		s.log.Warn("Received a verdict for a client that's not registered", zap.Uint32("clientId", msg.ClientId()))
+		return
+	}
+
+	s.proxyConnection.IncomingMessageChannel <- handlers.DestinationMessage{
+		ClientId:      msg.ClientId(),
+		RecvTimestamp: s.proxyConnection.GetNowTimestamp(),
+		Data:          appData,
+	}
+}
+
+func (s *udpSpanreedDestination) onReceiveCloseRequest(msg *SpanreedMessage.CloseConnection, appData []byte) {
+	s.mut_destinationConnections.RLock()
+	defer s.mut_destinationConnections.RUnlock()
+
+	_, has := s.destinationConnections[msg.ClientId()]
+	if !has {
+		s.log.Warn("Received a verdict for a client that's not registered", zap.Uint32("clientId", msg.ClientId()))
+		return
+	}
+
+	s.proxyConnection.OutgoingCloseRequests <- handlers.ClientCloseCommand{
+		ClientId: msg.ClientId(),
+		Reason:   string(msg.Reason()),
+		Error:    nil,
+	}
 }

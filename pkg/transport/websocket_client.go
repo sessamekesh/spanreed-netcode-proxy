@@ -19,6 +19,7 @@ import (
 )
 
 type wsConnectionChannels struct {
+	IsConnected      bool
 	OutgoingMessages chan<- handlers.ClientMessage
 	CloseRequest     chan<- handlers.ClientCloseCommand
 	Verdict          chan<- handlers.OpenClientConnectionVerdict
@@ -162,6 +163,7 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 		}
 
 		ws.connections[clientId] = &wsConnectionChannels{
+			IsConnected:      false,
 			OutgoingMessages: outgoingMessages,
 			CloseRequest:     closeRequest,
 			Verdict:          verdict,
@@ -236,6 +238,16 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 			return
 		}
 	}
+
+	// Mark connected
+	func() {
+		ws.mut_connections.RLock()
+		defer ws.mut_connections.RUnlock()
+		channels, has := ws.connections[clientId]
+		if has {
+			channels.IsConnected = true
+		}
+	}()
 
 	//
 	// Now we can enter the main loop! Easy enough.

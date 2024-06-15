@@ -9,10 +9,16 @@ table ConnectionVerdict {
   accepted: bool;
 }
 
-union InnerMsg { ProxyMessage, ConnectionVerdict }
+table CloseConnection {
+  client_id: uint32;
+  reason: string;
+}
+
+union InnerMsg { ProxyMessage, ConnectionVerdict, CloseConnection }
 
 table DestinationMessage {
   msg: InnerMsg;
+  app_data: [ubyte];
 }
 
 root_type DestinationMessage;

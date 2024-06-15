@@ -62,14 +62,54 @@ func (rcv *DestinationMessage) Msg(obj *flatbuffers.Table) bool {
 	return false
 }
 
+func (rcv *DestinationMessage) AppData(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
+	}
+	return 0
+}
+
+func (rcv *DestinationMessage) AppDataLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DestinationMessage) AppDataBytes() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *DestinationMessage) MutateAppData(j int, n byte) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
+	}
+	return false
+}
+
 func DestinationMessageStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+	builder.StartObject(3)
 }
 func DestinationMessageAddMsgType(builder *flatbuffers.Builder, msgType InnerMsg) {
 	builder.PrependByteSlot(0, byte(msgType), 0)
 }
 func DestinationMessageAddMsg(builder *flatbuffers.Builder, msg flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(msg), 0)
+}
+func DestinationMessageAddAppData(builder *flatbuffers.Builder, appData flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(appData), 0)
+}
+func DestinationMessageStartAppDataVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
 }
 func DestinationMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

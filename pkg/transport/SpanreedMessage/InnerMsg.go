@@ -10,18 +10,21 @@ const (
 	InnerMsgNONE              InnerMsg = 0
 	InnerMsgProxyMessage      InnerMsg = 1
 	InnerMsgConnectionVerdict InnerMsg = 2
+	InnerMsgCloseConnection   InnerMsg = 3
 )
 
 var EnumNamesInnerMsg = map[InnerMsg]string{
 	InnerMsgNONE:              "NONE",
 	InnerMsgProxyMessage:      "ProxyMessage",
 	InnerMsgConnectionVerdict: "ConnectionVerdict",
+	InnerMsgCloseConnection:   "CloseConnection",
 }
 
 var EnumValuesInnerMsg = map[string]InnerMsg{
 	"NONE":              InnerMsgNONE,
 	"ProxyMessage":      InnerMsgProxyMessage,
 	"ConnectionVerdict": InnerMsgConnectionVerdict,
+	"CloseConnection":   InnerMsgCloseConnection,
 }
 
 func (v InnerMsg) String() string {
