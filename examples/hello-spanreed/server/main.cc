@@ -1,3 +1,7 @@
+// Must go before winsock
+#include <spanreed_messages/proxy_destination_message_generated.h>
+// ...
+
 #include <WinSock2.h>
 #include <concurrentqueue.h>
 #include <messages/client_message_generated.h>
@@ -25,6 +29,8 @@ struct DrawnDot {
 struct WorldState {
   std::vector<DrawnDot> dots;
 };
+
+void handle_recv_message(SOCKET sock, char* msg, int msglen);
 
 int main() {
   std::unordered_map<std::uint32_t, ConnectedClient> connected_clients{};
@@ -90,6 +96,7 @@ int main() {
                 << inet_ntoa(recv_addr.sin_addr) << " "
                 << ntohs(recv_addr.sin_port) << std::endl;
 
+      handle_recv_message(server_socket, message, message_len);
       // TODO (sessamekesh): C++ parser for various messages, connection flow
       // for existing connections, otherwise broadcast to connected clients
     }
@@ -107,3 +114,5 @@ int main() {
 
   return 0;
 }
+
+void handle_recv_message(SOCKET sock, char* msg, int msglen) {}
