@@ -66,6 +66,8 @@ static bool cmp_addr(const sockaddr_in& a, const sockaddr_in& b) {
   return true;
 }
 
+constexpr long long kClientSendFrequencyUs = 50000000;
+
 int main() {
   std::cout << "-------- Hello Spanreed UDP Server --------" << std::endl;
 
@@ -77,7 +79,7 @@ int main() {
   };
 
   WSADATA wsa{};
-  if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
     std::cerr << "Failed to startup WinSock - error code " << WSAGetLastError()
               << std::endl;
     return -1;
@@ -130,8 +132,22 @@ int main() {
   });
 
   QueuedClientMessage msg{};
+  WorldState world_state{};
 
+  auto last_frame_time = gGetTimestamp();
   while (bRunning) {
+    const auto this_frame_time = gGetTimestamp();
+    auto dt_s = (this_frame_time - last_frame_time) / 1000000.f;
+    last_frame_time = this_frame_time;
+
+    for (auto& dot : world_state.dots) {
+      dot.t -= dt_s;
+    }
+
+    std::remove_copy_if(world_state.dots.begin(), world_state.dots.end(),
+                        std::back_inserter(world_state.dots),
+                        [](const DrawnDot& d) { return d.t <= 0.f; });
+
     if (!gClientMessageQueue.try_dequeue(msg)) {
       continue;
     }
@@ -147,10 +163,17 @@ int main() {
     }
 
     if (auto* click_msg = msg.msg->user_message_as_UserClickMessage()) {
-      // TODO (sessamekesh): Add new dot!
+      std::cout << "UserClickMsg: (" << msg.client_id << "): " << click_msg->x()
+                << ", " << click_msg->y() << std::endl;
+      DrawnDot new_dot{};
+      new_dot.t = 5.f;
+      new_dot.x = click_msg->x();
+      new_dot.y = click_msg->y();
+      world_state.dots.push_back(new_dot);
     } else if (auto* broadcast_msg =
                    msg.msg->user_message_as_UserChatMessage()) {
-      // TODO (sessamekesh): Broadcast message to all clients!
+      std::cout << "UserChatMsg: (" << msg.client_id
+                << "): " << broadcast_msg->text() << std::endl;
       flatbuffers::FlatBufferBuilder inner_msg_fbb;
       auto user_text = inner_msg_fbb.CreateString(client.client_name);
       auto broadcast_text =
@@ -176,15 +199,68 @@ int main() {
       }
 
       for (const auto& target : broadcast_targets) {
-        // TODO (sessamekesh): Assemble message
-        // TODO (sessamekesh): Broadcast message
+        flatbuffers::FlatBufferBuilder sfbb{};
+        auto proxy_msg_ptr = SpanreedMessage::CreateProxyMessage(
+            sfbb, target.spanreed_client_id);
+        auto app_data = sfbb.CreateVector(inner_msg_data, inner_msg_len);
+        auto dest_msg = SpanreedMessage::CreateDestinationMessage(
+            sfbb, SpanreedMessage::InnerMsg_ProxyMessage, proxy_msg_ptr.Union(),
+            app_data);
+
+        sfbb.Finish(dest_msg);
+
+        uint8_t* dest_msg_data = sfbb.GetBufferPointer();
+        size_t dest_msg_len = sfbb.GetSize();
+
+        sendto(server_socket, reinterpret_cast<const char*>(dest_msg_data),
+               dest_msg_len, 0x00,
+               reinterpret_cast<const sockaddr*>(&target.spanreed_client_addr),
+               sizeof(target.spanreed_client_addr));
       }
     }
-    // TODO (sessamekesh): Handle incoming messages
-    //  - Add new dots to sim
-    //  - Append list of messages to broadcast
-    // TODO (sessamekesh): Lifetime expire dots
-    // TODO (sessamekesh): Broadcast messages to clients
+
+    flatbuffers::FlatBufferBuilder app_data_builder{};
+    std::vector<HelloSpanreed::Dot> msg_dots(world_state.dots.size());
+    for (const auto& logical_dot : world_state.dots) {
+      msg_dots.push_back(HelloSpanreed::Dot(logical_dot.x, logical_dot.y, 1.f,
+                                            HelloSpanreed::Color_Blue));
+    }
+    auto dots_v = app_data_builder.CreateVectorOfStructs(msg_dots);
+    auto game_state_msg =
+        HelloSpanreed::CreateServerGameStateMessage(app_data_builder, dots_v);
+    auto app_data_v = HelloSpanreed::CreateServerMessage(
+        app_data_builder, HelloSpanreed::Message_ServerChatMessage,
+        game_state_msg.Union());
+    app_data_builder.Finish(app_data_v);
+    const uint8_t* app_data = app_data_builder.GetBufferPointer();
+    size_t app_data_len = app_data_builder.GetSize();
+
+    {
+      std::lock_guard l(gMutConnectedClients);
+      for (auto& client : gConnectedClients) {
+        if (this_frame_time - client.second.last_send_time >=
+            ::kClientSendFrequencyUs) {
+          client.second.last_send_time = this_frame_time;
+
+          flatbuffers::FlatBufferBuilder fbb;
+          auto proxy_msg = SpanreedMessage::CreateProxyMessage(
+              fbb, client.second.spanreed_client_id);
+          auto app_data_v = fbb.CreateVector(app_data, app_data_len);
+          SpanreedMessage::CreateDestinationMessage(
+              fbb, SpanreedMessage::InnerMsg_ProxyMessage, proxy_msg.Union(),
+              app_data_v);
+
+          uint8_t* dest_msg_data = fbb.GetBufferPointer();
+          size_t dest_msg_len = fbb.GetSize();
+
+          sendto(server_socket, reinterpret_cast<const char*>(dest_msg_data),
+                 dest_msg_len, 0x00,
+                 reinterpret_cast<const sockaddr*>(
+                     &client.second.spanreed_client_addr),
+                 sizeof(client.second.spanreed_client_addr));
+        }
+      }
+    }
   }
 
   t.join();
@@ -193,9 +269,12 @@ int main() {
 }
 
 void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
-  if (!SpanreedMessage::VerifyProxyDestinationMessageBuffer(
-          flatbuffers::Verifier(reinterpret_cast<std::uint8_t*>(msg),
-                                msglen))) {
+  flatbuffers::Verifier::Options opts{};
+  opts.check_alignment = true;
+  opts.check_nested_flatbuffers = true;
+  opts.max_depth = 5;
+  flatbuffers::Verifier v(reinterpret_cast<std::uint8_t*>(msg), msglen, opts);
+  if (!SpanreedMessage::VerifyProxyDestinationMessageBuffer(v)) {
     // TODO (sessamekesh): Error state
     return;
   }
@@ -232,8 +311,12 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
 void connection_request(
     SOCKET sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
     const std::uint8_t* app_data, size_t app_data_len, sockaddr_in src) {
-  if (!HelloSpanreed::VerifyClientMessageBuffer(
-          flatbuffers::Verifier(app_data, app_data_len))) {
+  flatbuffers::Verifier::Options opts{};
+  opts.check_alignment = true;
+  opts.check_nested_flatbuffers = true;
+  opts.max_depth = 5;
+  flatbuffers::Verifier v(app_data, app_data_len, opts);
+  if (!HelloSpanreed::VerifyClientMessageBuffer(v)) {
     return;
   }
   auto* client_message = HelloSpanreed::GetClientMessage(app_data)
@@ -339,8 +422,12 @@ void handle_client_message(SOCKET sock,
     client = it->second;
   }
 
-  if (!HelloSpanreed::VerifyClientMessageBuffer(
-          flatbuffers::Verifier(app_data_bytes, app_data_len))) {
+  flatbuffers::Verifier::Options opts{};
+  opts.check_alignment = true;
+  opts.check_nested_flatbuffers = true;
+  opts.max_depth = 5;
+  flatbuffers::Verifier v(app_data_bytes, app_data_len, opts);
+  if (!HelloSpanreed::VerifyClientMessageBuffer(v)) {
     return;
   }
 
