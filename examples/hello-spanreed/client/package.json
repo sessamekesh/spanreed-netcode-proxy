@@ -1,0 +1,9 @@
+{
+  "name": "hello-spanreed-client",
+  "version": "1.0.0",
+  "description": "Web client for \"Hello Spanreed\" demo",
+  "main": "index.js",
+  "author": "Kamaron Peterson (@sessamekesh)",
+  "license": "MIT",
+  "private": true
+}
