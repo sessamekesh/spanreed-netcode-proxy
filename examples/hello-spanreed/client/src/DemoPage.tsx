@@ -1,7 +1,22 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { DemoCanvas } from './DemoCanvas';
+import { DefaultLogCb, LogLevel } from './log';
+import { Console } from './Console';
+import { ConnectionStateComponent } from './ConnectionStateComponent';
 
 export const DemoPage: React.FC = () => {
+  const [lines, setLines] = useState<
+    Array<{ msg: string; logLevel: LogLevel }>
+  >([]);
+
+  const LogFn = useCallback(
+    (msg: string, logLevel: LogLevel = LogLevel.Info) => {
+      DefaultLogCb(msg, logLevel);
+      setLines((old) => [...old, { msg, logLevel }]);
+    },
+    [setLines]
+  );
+
   return (
     <OuterContainer>
       <span
@@ -14,7 +29,9 @@ export const DemoPage: React.FC = () => {
       >
         Hello Spanreed Client
       </span>
-      <DemoCanvas />
+      <DemoCanvas logFn={LogFn} />
+      <ConnectionStateComponent />
+      <Console lines={lines} />
     </OuterContainer>
   );
 };
@@ -30,6 +47,9 @@ const OuterContainer: React.FC<OuterContainerProps> = ({ children }) => {
         borderRadius: '8px',
         display: 'flex',
         flexDirection: 'column',
+        maxWidth: '800px',
+        marginLeft: 'auto',
+        marginRight: 'auto',
       }}
     >
       {children}

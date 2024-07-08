@@ -1,6 +1,6 @@
 import { buildCircleVertexBufferData } from './geomtry';
 import { createDynamicVertexBuffer, createStaticVertexBuffer } from './glutils';
-import { DefaultLogCb, LogCb, LogLevel } from './log';
+import { DefaultLogCb, LogCb, LogLevel, WrapLogFn } from './log';
 import { SolidShader } from './solid.shader';
 
 const CIRCLE_SEGMENT_COUNT = 20;
@@ -14,13 +14,15 @@ export class DemoRenderer {
     private readonly vao: WebGLVertexArrayObject,
     private readonly gpuInstanceBuffer: WebGLBuffer,
     private readonly cpuInstanceBuffer: ArrayBuffer,
+    private readonly log: LogCb,
     private instanceCt: number
   ) {}
 
   static Create(
     gl: WebGL2RenderingContext,
-    log: LogCb = DefaultLogCb
+    logFn: LogCb = DefaultLogCb
   ): DemoRenderer | null {
+    const log = WrapLogFn('DemoRenderer', logFn);
     const circleGeo = buildCircleVertexBufferData(CIRCLE_SEGMENT_COUNT);
     const solidShader = SolidShader.Create(gl, log);
 
@@ -67,6 +69,7 @@ export class DemoRenderer {
       vao,
       instanceBuffer,
       new ArrayBuffer(16 * MAX_INSTANCE_COUNT),
+      log,
       0
     );
   }

@@ -7,6 +7,12 @@ export enum LogLevel {
 
 export type LogCb = (msg: string, level?: LogLevel) => void;
 
+export function WrapLogFn(name: string, logCb: LogCb): LogCb {
+  return (msg, level) => {
+    logCb(`[${name}] ${msg}`, level);
+  };
+}
+
 export const DefaultLogCb: LogCb = (msg, level: LogLevel = LogLevel.Info) => {
   switch (level) {
     case LogLevel.Debug:

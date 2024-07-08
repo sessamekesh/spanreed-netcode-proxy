@@ -1,10 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { DemoRenderer } from './DemoRenderer';
 import { COLORS } from './colors';
+import { DefaultLogCb, LogCb, LogLevel, WrapLogFn } from './log';
 
-export interface DemoCanvasProps {}
+export interface DemoCanvasProps {
+  logFn?: LogCb;
+}
 
-export const DemoCanvas: React.FC = () => {
+export const DemoCanvas: React.FC<DemoCanvasProps> = ({ logFn }) => {
+  const log = WrapLogFn('DemoCanvas', logFn ?? DefaultLogCb);
   const ref = useRef<HTMLCanvasElement>(null);
 
   const [gl, setGl] = useState<WebGL2RenderingContext>();
@@ -26,7 +30,8 @@ export const DemoCanvas: React.FC = () => {
   useEffect(() => {
     if (!gl) return;
 
-    const renderer = DemoRenderer.Create(gl);
+    log('Creating new renderer!');
+    const renderer = DemoRenderer.Create(gl, logFn);
     if (!renderer) {
       return;
     }
