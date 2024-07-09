@@ -16,7 +16,7 @@ export class DemoRenderer {
     private readonly cpuInstanceBuffer: ArrayBuffer,
     private readonly log: LogCb,
     private instanceCt: number
-  ) {}
+  ) { }
 
   static Create(
     gl: WebGL2RenderingContext,
@@ -130,8 +130,7 @@ export class DemoRenderer {
           this.vao,
           CIRCLE_SEGMENT_COUNT * 3,
           this.instanceCt,
-          gl.canvas.width,
-          gl.canvas.height
+          400, 400
         );
       }
 
