@@ -46,7 +46,7 @@ export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
             break;
         }
         return (
-          <span>
+          <span key={`msgidx-${idx}`}>
             <span
               style={{
                 color: '#aaa',
@@ -55,7 +55,6 @@ export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
                 paddingRight: '0.25ch',
                 marginLeft: '0.5ch',
               }}
-              id={`msgidx-${idx}`}
             >
               {idx + 1}
             </span>

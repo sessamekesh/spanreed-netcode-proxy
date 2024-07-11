@@ -153,6 +153,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 				}
 			}
 
+			s.log.Info("Received UDP message", zap.Int("bytesRead", bytesRead))
 			rawMsg := buf[0:bytesRead]
 			parsedMsg, msgParseError := safeParseDestinationMessage(rawMsg)
 			if msgParseError != nil {
@@ -261,11 +262,16 @@ func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenClient
 	SpanreedMessage.ProxyDestConnectionRequestAddClientId(b, outgoingMsg.ClientId)
 	inner_msg := SpanreedMessage.ProxyDestConnectionRequestEnd(b)
 
+	var appDataLoc flatbuffers.UOffsetT
+	if outgoingMsg.AppData != nil {
+		appDataLoc = b.CreateByteVector(outgoingMsg.AppData)
+	}
+
 	SpanreedMessage.ProxyDestinationMessageStart(b)
 	SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestConnectionRequest)
 	SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
 	if outgoingMsg.AppData != nil {
-		SpanreedMessage.ProxyDestinationMessageAddAppData(b, b.CreateByteVector(outgoingMsg.AppData))
+		SpanreedMessage.ProxyDestinationMessageAddAppData(b, appDataLoc)
 	}
 	cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
 	b.Finish(cmsg)
@@ -354,6 +360,8 @@ func (s *udpSpanreedDestination) onProxyRequestClose(msg handlers.ClientCloseCom
 }
 
 func (s *udpSpanreedDestination) onReceiveVerdict(msg *SpanreedMessage.ConnectionVerdict, appData []byte) {
+	s.log.Info("Received verdict message", zap.Uint32("clientId", msg.ClientId()), zap.Bool("verdict", msg.Accepted()))
+
 	s.mut_destinationConnections.RLock()
 	defer s.mut_destinationConnections.RUnlock()
 

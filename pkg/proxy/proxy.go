@@ -64,7 +64,7 @@ type proxy struct {
 	incomingClientOpenConnectionRecvChannel <-chan handlers.OpenClientConnectionCommand
 
 	incomingDestinationVerdictSendChannel       chan<- handlers.OpenClientConnectionVerdict
-	incomingDesetinationVerdictRecvChannel      <-chan handlers.OpenClientConnectionVerdict
+	incomingDestinationVerdictRecvChannel       <-chan handlers.OpenClientConnectionVerdict
 	incomingDestinationMessageSendChannel       chan<- handlers.DestinationMessage
 	incomingDestinationMessageRecvChannel       <-chan handlers.DestinationMessage
 	incomingDestinationCloseRequestsSendChannel chan<- handlers.ClientCloseCommand
@@ -190,7 +190,7 @@ func CreateProxy(config ProxyConfig) *proxy {
 		incomingDestinationMessageSendChannel:       incomingDestinationMessagesChannel,
 		incomingDestinationMessageRecvChannel:       incomingDestinationMessagesChannel,
 		incomingDestinationVerdictSendChannel:       incomingDestinationVerdictsChannel,
-		incomingDesetinationVerdictRecvChannel:      incomingDestinationVerdictsChannel,
+		incomingDestinationVerdictRecvChannel:       incomingDestinationVerdictsChannel,
 		incomingDestinationCloseRequestsSendChannel: incomingDestinationCloseRequests,
 		incomingDestinationCloseRequestsRecvChannel: incomingDestinationCloseRequests,
 
@@ -390,7 +390,8 @@ func (p *proxy) Start(ctx context.Context) {
 				if err == nil {
 					p.clientStore.SetDestinationRecvTimestamp(destinationMsg.ClientId, p.getNowTime())
 				}
-			case verdict := <-p.incomingDesetinationVerdictRecvChannel:
+			case verdict := <-p.incomingDestinationVerdictRecvChannel:
+				p.log.Debug("Spanreed proxy received incoming verdict from destination handler to forward on to client")
 				err := p.forwardDestinationVerdict(verdict)
 				if err != nil {
 					p.log.Error("Error forwarding destination verdict", zap.Uint32("clientId", verdict.ClientId), zap.Error(err))
@@ -645,12 +646,14 @@ func (p *proxy) forwardDestinationVerdict(msg handlers.OpenClientConnectionVerdi
 	p.log.Debug("Forwarding verdict", zap.Uint32("clientId", msg.ClientId), zap.Bool("verdict", msg.Verdict), zap.Error(msg.Error))
 	clientName, clientNameErr := p.clientStore.GetClientHandlerName(msg.ClientId)
 	if clientNameErr != nil {
+		p.log.Error("Could not find handler for client", zap.Uint32("clientId", msg.ClientId))
 		return clientNameErr
 	}
 
 	p.mut_outgoingClientMessageChannels.RLock()
 	outgoingChannels, has := p.outgoingClientMessageChannels[clientName]
 	if !has {
+		p.log.Error("No client handler found with name", zap.Uint32("clientId", msg.ClientId), zap.String("clientHandler", clientName))
 		return &MissingClientHandler{
 			Name: clientName,
 		}

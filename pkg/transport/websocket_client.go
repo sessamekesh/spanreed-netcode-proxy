@@ -378,6 +378,8 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 				ws.handleProxyCloseRequest(closeRequest)
 			case msgRequest := <-ws.proxyConnection.OutgoingMessageChannel:
 				ws.handleOutgoingMessageRequest(msgRequest)
+			case incomingVerdict := <-ws.proxyConnection.OpenClientVerdictChannel:
+				ws.handleIncomingVerdict(incomingVerdict)
 			}
 		}
 
@@ -413,10 +415,24 @@ func (ws *websocketSpanreedClient) handleOutgoingMessageRequest(msgRequest handl
 
 	route, has := ws.connections[msgRequest.ClientId]
 	if !has {
-		// TODO (sessamekesh): Log problem
 		ws.log.Error("WebSocket server missing client ID", zap.Uint32("clientId", msgRequest.ClientId))
 		return
 	}
 
 	route.OutgoingMessages <- msgRequest
+}
+
+func (ws *websocketSpanreedClient) handleIncomingVerdict(verdictMsg handlers.OpenClientConnectionVerdict) {
+	ws.mut_connections.RLock()
+	defer ws.mut_connections.RUnlock()
+
+	ws.log.Info("Received incoming verdict", zap.Uint32("clientId", verdictMsg.ClientId), zap.Bool("verdict", verdictMsg.Verdict))
+
+	route, has := ws.connections[verdictMsg.ClientId]
+	if !has {
+		ws.log.Error("WebSocket server missing client ID", zap.Uint32("clientId", verdictMsg.ClientId))
+		return
+	}
+
+	route.Verdict <- verdictMsg
 }

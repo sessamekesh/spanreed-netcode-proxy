@@ -36,6 +36,7 @@ std::unordered_map<std::uint32_t, ConnectedClient> gConnectedClients{};
 moodycamel::ConcurrentQueue<QueuedClientMessage> gClientMessageQueue;
 
 long long (*gGetTimestamp)() = nullptr;
+std::chrono::high_resolution_clock::time_point gTpStart;
 
 struct DrawnDot {
   float x;
@@ -71,10 +72,10 @@ constexpr long long kClientSendFrequencyUs = 50000000;
 int main() {
   std::cout << "-------- Hello Spanreed UDP Server --------" << std::endl;
 
-  auto tp_start = std::chrono::high_resolution_clock::now();
-  auto gGetTimestamp = [tp_start]() {
+  gTpStart = std::chrono::high_resolution_clock::now();
+  gGetTimestamp = []() {
     auto now = std::chrono::high_resolution_clock::now();
-    return std::chrono::duration_cast<std::chrono::microseconds>(now - tp_start)
+    return std::chrono::duration_cast<std::chrono::microseconds>(now - gTpStart)
         .count();
   };
 
@@ -334,13 +335,14 @@ void connection_request(
         gConnectedClients.size() > 20) {
       // Client ID already exists, send a FALSE verdict
       flatbuffers::FlatBufferBuilder fbb;
-      SpanreedMessage::DestinationMessageBuilder dmb(fbb);
-      dmb.add_msg_type(SpanreedMessage::InnerMsg_ConnectionVerdict);
 
       SpanreedMessage::ConnectionVerdictBuilder cbb(fbb);
       cbb.add_accepted(false);
       cbb.add_client_id(request->client_id());
       auto cv_offset = cbb.Finish();
+
+      SpanreedMessage::DestinationMessageBuilder dmb(fbb);
+      dmb.add_msg_type(SpanreedMessage::InnerMsg_ConnectionVerdict);
       dmb.add_msg(cv_offset.Union());
 
       auto msg = dmb.Finish();
@@ -366,13 +368,14 @@ void connection_request(
   gConnectedClients.insert({request->client_id(), client_data});
 
   flatbuffers::FlatBufferBuilder fbb;
-  SpanreedMessage::DestinationMessageBuilder dmb(fbb);
-  dmb.add_msg_type(SpanreedMessage::InnerMsg_ConnectionVerdict);
 
   SpanreedMessage::ConnectionVerdictBuilder cbb(fbb);
   cbb.add_accepted(true);
   cbb.add_client_id(request->client_id());
   auto cv_offset = cbb.Finish();
+
+  SpanreedMessage::DestinationMessageBuilder dmb(fbb);
+  dmb.add_msg_type(SpanreedMessage::InnerMsg_ConnectionVerdict);
   dmb.add_msg(cv_offset.Union());
 
   auto msg = dmb.Finish();

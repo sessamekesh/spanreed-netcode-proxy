@@ -11,8 +11,10 @@
     "start": "webpack-dev-server"
   },
   "dependencies": {
+    "@types/flatbuffers": "^1.10.3",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "flatbuffers": "^24.3.25",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ts-loader": "^9.5.1",

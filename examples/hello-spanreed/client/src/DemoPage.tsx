@@ -30,7 +30,7 @@ export const DemoPage: React.FC = () => {
         Hello Spanreed Client
       </span>
       <DemoCanvas logFn={LogFn} />
-      <ConnectionStateComponent />
+      <ConnectionStateComponent logCb={LogFn} />
       <Console lines={lines} />
     </OuterContainer>
   );

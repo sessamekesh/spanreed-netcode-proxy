@@ -8,6 +8,7 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, "dist"),
     filename: "hello-spanreed-client-bundle.js",
+    publicPath: '/',
   },
   module: {
     rules: [
@@ -36,7 +37,7 @@ module.exports = {
   devServer: {
     host: "localhost",
     historyApiFallback: true,
-    port: 3000,
+    port: 8080,
     open: true,
     hot: true,
   },

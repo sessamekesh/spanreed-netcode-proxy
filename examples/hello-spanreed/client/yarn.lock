@@ -415,6 +415,11 @@
     "@types/qs" "*"
     "@types/serve-static" "*"
 
+"@types/flatbuffers@^1.10.3":
+  version "1.10.3"
+  resolved "https://registry.yarnpkg.com/@types/flatbuffers/-/flatbuffers-1.10.3.tgz#2ef038a8b6a813dde4d341e769f7eb6131ae7f7f"
+  integrity sha512-kwJQsAROanCiMXSLjcTLmYVBIJ9Qyuqs92SaDIcj2EII2KnDgZbiU7it1Z/JfZd1gmxw/lAahMysQ6ZM+j3Ryw==
+
 "@types/html-minifier-terser@^6.0.0":
   version "6.1.0"
   resolved "https://registry.yarnpkg.com/@types/html-minifier-terser/-/html-minifier-terser-6.1.0.tgz#4fc33a00c1d0c16987b1a20cf92d20614c55ac35"
@@ -1868,6 +1873,11 @@ flat@^5.0.2:
   version "5.0.2"
   resolved "https://registry.yarnpkg.com/flat/-/flat-5.0.2.tgz#8ca6fe332069ffa9d324c327198c598259ceb241"
   integrity sha512-b6suED+5/3rTpUBdG1gupIl8MPFCAMA0QXwmljLhvCUKcUvdE4gWky9zpuGCcXHOsz4J9wPGNWq6OKpmIzz3hQ==
+
+flatbuffers@^24.3.25:
+  version "24.3.25"
+  resolved "https://registry.yarnpkg.com/flatbuffers/-/flatbuffers-24.3.25.tgz#e2f92259ba8aa53acd0af7844afb7c7eb95e7089"
+  integrity sha512-3HDgPbgiwWMI9zVB7VYBHaMrbOO7Gm0v+yD2FV/sCKj+9NDeVL7BOBYUuhWAQGKWOzBo8S9WdMvV0eixO233XQ==
 
 follow-redirects@^1.0.0:
   version "1.15.6"
