@@ -276,6 +276,9 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
   opts.max_depth = 5;
   flatbuffers::Verifier v(reinterpret_cast<std::uint8_t*>(msg), msglen, opts);
   if (!SpanreedMessage::VerifyProxyDestinationMessageBuffer(v)) {
+    std::cerr << "Invalid message received from client at "
+              << inet_ntoa(src.sin_addr) << " port " << src.sin_port
+              << std::endl;
     // TODO (sessamekesh): Error state
     return;
   }
@@ -312,17 +315,21 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
 void connection_request(
     SOCKET sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
     const std::uint8_t* app_data, size_t app_data_len, sockaddr_in src) {
+  std::cout << "Received connection request" << std::endl;
   flatbuffers::Verifier::Options opts{};
   opts.check_alignment = true;
   opts.check_nested_flatbuffers = true;
   opts.max_depth = 5;
   flatbuffers::Verifier v(app_data, app_data_len, opts);
   if (!HelloSpanreed::VerifyClientMessageBuffer(v)) {
+    std::cout << "--- Not a client message buffer, aborting connection request"
+              << std::endl;
     return;
   }
   auto* client_message = HelloSpanreed::GetClientMessage(app_data)
                              ->user_message_as_UserConnectMessage();
   if (client_message == nullptr) {
+    std::cout << "--- Does not have UserConnectMessate, aborting" << std::endl;
     return;
   }
 
@@ -353,6 +360,7 @@ void connection_request(
 
       sendto(sock, reinterpret_cast<const char*>(buf), buf_len, 0x00,
              reinterpret_cast<sockaddr*>(&src), sizeof(src));
+      std::cout << "Rejecting client that's already connected" << std::endl;
 
       return;
     }
@@ -386,12 +394,17 @@ void connection_request(
 
   sendto(sock, reinterpret_cast<const char*>(buf), buf_len, 0x00,
          reinterpret_cast<sockaddr*>(&src), sizeof(src));
+  std::cout << "Accepting client with ID " << request->client_id() << std::endl;
 }
 
 void close_connection_request(
     SOCKET sock, const SpanreedMessage::ProxyDestCloseConnection* request,
     sockaddr_in src) {
   ConnectedClient client{};
+
+  std::cout << "Received close connection request for "
+            << inet_ntoa(src.sin_addr) << " at port " << src.sin_port
+            << ", for client " << request->client_id() << std::endl;
 
   {
     std::shared_lock l(gMutConnectedClients);

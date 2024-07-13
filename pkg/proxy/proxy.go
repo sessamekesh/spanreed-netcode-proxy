@@ -659,6 +659,8 @@ func (p *proxy) forwardDestinationVerdict(msg handlers.OpenClientConnectionVerdi
 		}
 	}
 
+	p.clientStore.Connect(msg.ClientId)
+
 	outgoingChannels.connectionVerdicts <- msg
 	return nil
 }

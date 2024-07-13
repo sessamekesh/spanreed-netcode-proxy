@@ -284,7 +284,10 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 					} else {
 						log.Info("Received close request from client, attempting graceful shutdown")
 					}
-					// TODO (sessamekesh): Graceful close (send to proxy)
+					ws.proxyConnection.OutgoingCloseRequests <- handlers.ClientCloseCommand{
+						ClientId: clientId,
+						Reason:   "Close request received from websocket",
+					}
 					return
 				}
 
