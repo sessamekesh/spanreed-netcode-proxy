@@ -343,7 +343,6 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 		ws.log.Sugar().Infof("Starting WebSocket server at %s", ws.params.ListenAddress)
 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			ws.log.Error("Unexpected WebSocket server close!", zap.Error(err))
-			return
 		}
 	}()
 
