@@ -11,6 +11,6 @@ type ClientMessageHandler struct {
 	IncomingMessageChannel chan<- ClientMessage
 	OutgoingMessageChannel <-chan ClientMessage
 
-	OutgoingCloseRequests chan<- ClientCloseCommand
-	IncomingCloseRequests <-chan ClientCloseCommand
+	IncomingCloseRequests chan<- ClientCloseCommand
+	OutgoingCloseRequests <-chan ClientCloseCommand
 }

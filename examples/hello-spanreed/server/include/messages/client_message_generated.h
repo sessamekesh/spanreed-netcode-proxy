@@ -24,6 +24,9 @@ struct UserClickMessageBuilder;
 struct UserChatMessage;
 struct UserChatMessageBuilder;
 
+struct UserPingMessage;
+struct UserPingMessageBuilder;
+
 struct ClientMessage;
 struct ClientMessageBuilder;
 
@@ -32,33 +35,36 @@ enum UserMessage : uint8_t {
   UserMessage_UserConnectMessage = 1,
   UserMessage_UserClickMessage = 2,
   UserMessage_UserChatMessage = 3,
+  UserMessage_UserPingMessage = 4,
   UserMessage_MIN = UserMessage_NONE,
-  UserMessage_MAX = UserMessage_UserChatMessage
+  UserMessage_MAX = UserMessage_UserPingMessage
 };
 
-inline const UserMessage (&EnumValuesUserMessage())[4] {
+inline const UserMessage (&EnumValuesUserMessage())[5] {
   static const UserMessage values[] = {
     UserMessage_NONE,
     UserMessage_UserConnectMessage,
     UserMessage_UserClickMessage,
-    UserMessage_UserChatMessage
+    UserMessage_UserChatMessage,
+    UserMessage_UserPingMessage
   };
   return values;
 }
 
 inline const char * const *EnumNamesUserMessage() {
-  static const char * const names[5] = {
+  static const char * const names[6] = {
     "NONE",
     "UserConnectMessage",
     "UserClickMessage",
     "UserChatMessage",
+    "UserPingMessage",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameUserMessage(UserMessage e) {
-  if (::flatbuffers::IsOutRange(e, UserMessage_NONE, UserMessage_UserChatMessage)) return "";
+  if (::flatbuffers::IsOutRange(e, UserMessage_NONE, UserMessage_UserPingMessage)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesUserMessage()[index];
 }
@@ -77,6 +83,10 @@ template<> struct UserMessageTraits<HelloSpanreed::UserClickMessage> {
 
 template<> struct UserMessageTraits<HelloSpanreed::UserChatMessage> {
   static const UserMessage enum_value = UserMessage_UserChatMessage;
+};
+
+template<> struct UserMessageTraits<HelloSpanreed::UserPingMessage> {
+  static const UserMessage enum_value = UserMessage_UserPingMessage;
 };
 
 bool VerifyUserMessage(::flatbuffers::Verifier &verifier, const void *obj, UserMessage type);
@@ -235,6 +245,35 @@ inline ::flatbuffers::Offset<UserChatMessage> CreateUserChatMessageDirect(
       text__);
 }
 
+struct UserPingMessage FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef UserPingMessageBuilder Builder;
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+};
+
+struct UserPingMessageBuilder {
+  typedef UserPingMessage Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit UserPingMessageBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<UserPingMessage> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<UserPingMessage>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<UserPingMessage> CreateUserPingMessage(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  UserPingMessageBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
 struct ClientMessage FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ClientMessageBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
@@ -257,6 +296,9 @@ struct ClientMessage FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const HelloSpanreed::UserChatMessage *user_message_as_UserChatMessage() const {
     return user_message_type() == HelloSpanreed::UserMessage_UserChatMessage ? static_cast<const HelloSpanreed::UserChatMessage *>(user_message()) : nullptr;
   }
+  const HelloSpanreed::UserPingMessage *user_message_as_UserPingMessage() const {
+    return user_message_type() == HelloSpanreed::UserMessage_UserPingMessage ? static_cast<const HelloSpanreed::UserPingMessage *>(user_message()) : nullptr;
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_USER_MESSAGE_TYPE, 1) &&
@@ -276,6 +318,10 @@ template<> inline const HelloSpanreed::UserClickMessage *ClientMessage::user_mes
 
 template<> inline const HelloSpanreed::UserChatMessage *ClientMessage::user_message_as<HelloSpanreed::UserChatMessage>() const {
   return user_message_as_UserChatMessage();
+}
+
+template<> inline const HelloSpanreed::UserPingMessage *ClientMessage::user_message_as<HelloSpanreed::UserPingMessage>() const {
+  return user_message_as_UserPingMessage();
 }
 
 struct ClientMessageBuilder {
@@ -324,6 +370,10 @@ inline bool VerifyUserMessage(::flatbuffers::Verifier &verifier, const void *obj
     }
     case UserMessage_UserChatMessage: {
       auto ptr = reinterpret_cast<const HelloSpanreed::UserChatMessage *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case UserMessage_UserPingMessage: {
+      auto ptr = reinterpret_cast<const HelloSpanreed::UserPingMessage *>(obj);
       return verifier.VerifyTable(ptr);
     }
     default: return true;

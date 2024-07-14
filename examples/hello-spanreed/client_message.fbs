@@ -13,7 +13,9 @@ table UserChatMessage {
   text: string;
 }
 
-union UserMessage { UserConnectMessage, UserClickMessage, UserChatMessage }
+table UserPingMessage {}
+
+union UserMessage { UserConnectMessage, UserClickMessage, UserChatMessage, UserPingMessage }
 
 table ClientMessage {
   user_message: UserMessage;

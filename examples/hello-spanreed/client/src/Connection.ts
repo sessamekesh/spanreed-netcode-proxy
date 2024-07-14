@@ -9,11 +9,13 @@ import { ConnectClientVerdict } from './gen/spanreed-message/connect-client-verd
 type WebsocketConnection = {
   type: 'websocket';
   spanreedConnection: WebSocket;
+  userName: string;
 };
 
 type WebtransportConnection = {
   type: 'webtransport';
   spanreedConnection: WebTransport;
+  userName: string;
 };
 
 export type Connection = WebsocketConnection | WebtransportConnection;
@@ -29,11 +31,18 @@ export async function connectWebsocket(
   ws.binaryType = 'arraybuffer';
 
   log(
-    `Attempting to open WebSocket connection on ${spanreedAddress}...`,
+    `Attempting to open WebSocket connection on ${spanreedAddress} for userName=${userName}...`,
     LogLevel.Debug
   );
   await new Promise((resolve, reject) => {
-    ws.onerror = reject;
+    ws.onerror = (connectError) => {
+      if (connectError.currentTarget instanceof WebSocket) {
+        if (connectError.currentTarget.readyState === WebSocket.CLOSED) {
+          reject(new Error('Failed to connect to proxy'));
+        }
+      }
+      reject(connectError);
+    };
     ws.onopen = resolve;
   });
 
@@ -74,38 +83,30 @@ export async function connectWebsocket(
   );
   ws.send(connectClientPayload);
 
-  await Promise.race([
-    new Promise<void>((resolve, reject) => {
-      ws.onmessage = (msg) => {
-        const fbb = new ByteBuffer(new Uint8Array(msg.data as ArrayBuffer));
-        const verdict = ConnectClientVerdict.getRootAsConnectClientVerdict(fbb);
-        if (verdict.errorReason()) {
-          reject(new Error('Invalid auth response format'));
-          return;
-        }
+  await new Promise<void>((resolve, reject) => {
+    ws.onmessage = (msg) => {
+      const fbb = new ByteBuffer(new Uint8Array(msg.data as ArrayBuffer));
+      const verdict = ConnectClientVerdict.getRootAsConnectClientVerdict(fbb);
 
-        if (verdict.accepted()) {
-          resolve();
-        } else {
-          reject();
-        }
-
-        ws.onmessage = null;
-      };
-      ws.onclose = reject;
-    }),
-    new Promise((resolve) => setTimeout(resolve, 5000)).then(() => {
-      throw new Error('auth timeout');
-    }),
-  ]).catch((e) => {
+      if (verdict.accepted()) {
+        resolve();
+      } else {
+        reject(`destination rejected connection: ${verdict.errorReason() ?? '<unknown reason>'}`);
+      }
+    };
+    ws.onclose = reject;
+  }).catch((e) => {
     ws.close();
     throw e;
   });
+
+  ws.onclose = null;
+  ws.onmessage = null;
 
   log(
     `Connection opened successfully! Messages may now be forwarded to the destination server through this WebSocket connection.`,
     LogLevel.Debug
   );
 
-  return { type: 'websocket', spanreedConnection: ws };
+  return { type: 'websocket', spanreedConnection: ws, userName };
 }

@@ -262,7 +262,7 @@ func (p *proxy) CreateClientMessageHandler(name string) (*handlers.ClientMessage
 		IncomingMessageChannel: p.incomingClientMessageSendChannel,
 		OutgoingMessageChannel: outgoingMessageChannel,
 
-		IncomingCloseRequests: p.incomingClientCloseRequestsRecvChannel,
+		IncomingCloseRequests: p.incomingClientCloseRequestsSendChannel,
 		OutgoingCloseRequests: closeRequests,
 	}, nil
 }
@@ -318,8 +318,8 @@ func (p *proxy) CreateDestinationMessageHandler(name string, matchConnectionStri
 		IncomingMessageChannel: p.incomingDestinationMessageSendChannel,
 		OutgoingMessageChannel: outgoingMessageChannel,
 
-		OutgoingCloseRequests: closeRequestsChannel,
-		IncomingCloseRequests: p.incomingDestinationCloseRequestsRecvChannel,
+		DestinationCloseRequests: p.incomingDestinationCloseRequestsSendChannel,
+		ProxyCloseRequests:       closeRequestsChannel,
 	}
 
 	destinationHandlerChannels := destinationHandlerChannels{
@@ -350,7 +350,6 @@ func (p *proxy) Start(ctx context.Context) {
 				p.log.Info("Spanreed incoming client message goroutine attempting graceful shutdown")
 				return
 			case clientMsg := <-p.incomingClientMessageRecvChannel:
-				p.log.Debug("Spanreed proxy received incoming message from client handler to forward on to destination")
 				err := p.forwardClientMessage(clientMsg)
 				if err == nil {
 					p.clientStore.SetClientRecvTimestamp(clientMsg.ClientId, p.getNowTime())
@@ -412,21 +411,28 @@ func (p *proxy) Start(ctx context.Context) {
 	go func() {
 		p.log.Info("Starting Spanreed goroutine for handling timeouts", zap.Duration("interval", p.connectionKickLoopTime))
 		defer wg.Done()
+		defer p.log.Info("Timeout goroutine exiting! Hopefully because this was closed!")
 
 		// TODO (sessamekesh): Move this duration to configuration too
 		ticker := time.NewTicker(p.connectionKickLoopTime)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ctx.Done():
-				p.log.Info("Spanreed connection timeout goroutine attempting graceful shutdown...")
-				return
-			case <-ticker.C:
-				p.kickOldClients()
-				p.checkForAuthTimeouts()
+		loopDone := make(chan bool)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					p.log.Info("Spanreed connection timeout goroutine attempting graceful shutdown...")
+					loopDone <- true
+					return
+				case <-ticker.C:
+					p.kickOldClients()
+					p.checkForAuthTimeouts()
+				}
 			}
-		}
+		}()
+
+		<-loopDone
 	}()
 
 	wg.Wait()
@@ -443,6 +449,7 @@ func (p *proxy) forwardClientMessage(msg handlers.ClientMessage) error {
 	}
 
 	p.mut_outgoingDestinationMessageSendChannels.RLock()
+	defer p.mut_outgoingDestinationMessageSendChannels.RUnlock()
 	sendChannels, has := p.outgoingDestinationMessageSendChannels[destHandlerName]
 	if !has {
 		return &MissingDestinationHandler{
@@ -469,6 +476,7 @@ func (p *proxy) forwardDestinationMessage(msg handlers.DestinationMessage) error
 	}
 
 	p.mut_outgoingClientMessageChannels.RLock()
+	defer p.mut_outgoingClientMessageChannels.RUnlock()
 	sendChannels, has := p.outgoingClientMessageChannels[clientHandlerName]
 	if !has {
 		return &MissingClientHandler{
@@ -651,6 +659,7 @@ func (p *proxy) forwardDestinationVerdict(msg handlers.OpenClientConnectionVerdi
 	}
 
 	p.mut_outgoingClientMessageChannels.RLock()
+	defer p.mut_outgoingClientMessageChannels.RUnlock()
 	outgoingChannels, has := p.outgoingClientMessageChannels[clientName]
 	if !has {
 		p.log.Error("No client handler found with name", zap.Uint32("clientId", msg.ClientId), zap.String("clientHandler", clientName))

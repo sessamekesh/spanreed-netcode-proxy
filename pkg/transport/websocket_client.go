@@ -48,9 +48,6 @@ type WebsocketSpanreedClientParams struct {
 
 	MaxReadMessageSize int64
 
-	MagicNumber uint32
-	Version     uint8
-
 	Logger *zap.Logger
 }
 
@@ -209,9 +206,10 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 	case <-closeRequest:
 		log.Warn("Auth timeout")
 		b := flatbuffers.NewBuilder(64)
+		pAuthTimeoutMsg := b.CreateString("Authorization timed out")
 		SpanreedMessage.ConnectClientVerdictStart(b)
 		SpanreedMessage.ConnectClientVerdictAddAccepted(b, false)
-		SpanreedMessage.ConnectClientVerdictAddErrorReason(b, b.CreateString("Authorization timed out"))
+		SpanreedMessage.ConnectClientVerdictAddErrorReason(b, pAuthTimeoutMsg)
 		msg := SpanreedMessage.ConnectClientVerdictEnd(b)
 		b.Finish(msg)
 		buf := b.FinishedBytes()
@@ -265,7 +263,6 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 				c.Close()
 				return
 			case logicalMessage := <-outgoingMessages:
-				log.Info("Received message from proxy, forwarding to client", zap.Int("app_data_size", len(logicalMessage.Data)))
 				c.WriteMessage(websocket.BinaryMessage, logicalMessage.Data)
 			}
 		}
@@ -284,7 +281,7 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 					} else {
 						log.Info("Received close request from client, attempting graceful shutdown")
 					}
-					ws.proxyConnection.OutgoingCloseRequests <- handlers.ClientCloseCommand{
+					ws.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
 						ClientId: clientId,
 						Reason:   "Close request received from websocket",
 					}
@@ -377,7 +374,7 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case closeRequest := <-ws.proxyConnection.IncomingCloseRequests:
+			case closeRequest := <-ws.proxyConnection.OutgoingCloseRequests:
 				ws.handleProxyCloseRequest(closeRequest)
 			case msgRequest := <-ws.proxyConnection.OutgoingMessageChannel:
 				ws.handleOutgoingMessageRequest(msgRequest)
@@ -413,8 +410,6 @@ func (ws *websocketSpanreedClient) handleProxyCloseRequest(closeRequest handlers
 func (ws *websocketSpanreedClient) handleOutgoingMessageRequest(msgRequest handlers.ClientMessage) {
 	ws.mut_connections.RLock()
 	defer ws.mut_connections.RUnlock()
-
-	ws.log.Debug("Received outgoing message request", zap.Uint32("clientId", msgRequest.ClientId))
 
 	route, has := ws.connections[msgRequest.ClientId]
 	if !has {

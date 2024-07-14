@@ -11,3 +11,4 @@ Supports WebSocket and WebTransport client connections, supports TCP and UDP des
 `-ws-endpoint` _default: "/ws"_: HTTP endpoint that listens for WebSocket connections.
 
 `-udp` _default: true_: Set to false to disable UDP support
+`-udp-port` _default: 30321_: Port on which UDP server operates.

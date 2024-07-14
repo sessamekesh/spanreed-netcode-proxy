@@ -5,38 +5,42 @@
 import { UserChatMessage } from '../hello-spanreed/user-chat-message';
 import { UserClickMessage } from '../hello-spanreed/user-click-message';
 import { UserConnectMessage } from '../hello-spanreed/user-connect-message';
+import { UserPingMessage } from '../hello-spanreed/user-ping-message';
 
 
 export enum UserMessage {
   NONE = 0,
   UserConnectMessage = 1,
   UserClickMessage = 2,
-  UserChatMessage = 3
+  UserChatMessage = 3,
+  UserPingMessage = 4
 }
 
 export function unionToUserMessage(
   type: UserMessage,
-  accessor: (obj:UserChatMessage|UserClickMessage|UserConnectMessage) => UserChatMessage|UserClickMessage|UserConnectMessage|null
-): UserChatMessage|UserClickMessage|UserConnectMessage|null {
+  accessor: (obj:UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage) => UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage|null
+): UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage|null {
   switch(UserMessage[type]) {
     case 'NONE': return null; 
     case 'UserConnectMessage': return accessor(new UserConnectMessage())! as UserConnectMessage;
     case 'UserClickMessage': return accessor(new UserClickMessage())! as UserClickMessage;
     case 'UserChatMessage': return accessor(new UserChatMessage())! as UserChatMessage;
+    case 'UserPingMessage': return accessor(new UserPingMessage())! as UserPingMessage;
     default: return null;
   }
 }
 
 export function unionListToUserMessage(
   type: UserMessage, 
-  accessor: (index: number, obj:UserChatMessage|UserClickMessage|UserConnectMessage) => UserChatMessage|UserClickMessage|UserConnectMessage|null, 
+  accessor: (index: number, obj:UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage) => UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage|null, 
   index: number
-): UserChatMessage|UserClickMessage|UserConnectMessage|null {
+): UserChatMessage|UserClickMessage|UserConnectMessage|UserPingMessage|null {
   switch(UserMessage[type]) {
     case 'NONE': return null; 
     case 'UserConnectMessage': return accessor(index, new UserConnectMessage())! as UserConnectMessage;
     case 'UserClickMessage': return accessor(index, new UserClickMessage())! as UserClickMessage;
     case 'UserChatMessage': return accessor(index, new UserChatMessage())! as UserChatMessage;
+    case 'UserPingMessage': return accessor(index, new UserPingMessage())! as UserPingMessage;
     default: return null;
   }
 }

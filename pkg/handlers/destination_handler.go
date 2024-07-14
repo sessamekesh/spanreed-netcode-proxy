@@ -11,6 +11,6 @@ type DestinationMessageHandler struct {
 	IncomingMessageChannel chan<- DestinationMessage
 	OutgoingMessageChannel <-chan DestinationMessage
 
-	OutgoingCloseRequests chan<- ClientCloseCommand
-	IncomingCloseRequests <-chan ClientCloseCommand
+	ProxyCloseRequests       <-chan ClientCloseCommand
+	DestinationCloseRequests chan<- ClientCloseCommand
 }

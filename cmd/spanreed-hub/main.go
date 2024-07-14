@@ -43,6 +43,7 @@ func main() {
 	wsEndpoint := flag.String("ws-endpoint", "/ws", "HTTP endpoint that listens for WebSocket connections")
 
 	useUdp := flag.Bool("udp", true, "Set to false to disable UDP support")
+	udpPort := flag.Int("udp-port", 30321, "Port on which the UDP server operates")
 	flag.Parse()
 
 	//
@@ -64,8 +65,6 @@ func main() {
 		}
 
 		wsServer, wsServerErr := transport.CreateWebsocketHandler(wsHandler, transport.WebsocketSpanreedClientParams{
-			MagicNumber:    magicNumber,
-			Version:        version,
 			ListenAddress:  fmt.Sprintf(":%d", *wsPort),
 			ListenEndpoint: *wsEndpoint,
 			AllowAllHosts:  true,
@@ -93,7 +92,7 @@ func main() {
 		udpServer, udpServerError := transport.CreateUdpDestinationHandler(udpHandler, transport.UdpSpanreedDestinationParams{
 			MagicNumber:          magicNumber,
 			Version:              version,
-			UdpServerPort:        30321,
+			UdpServerPort:        *udpPort,
 			AllowAllDestinations: true,
 			Logger:               logger,
 		})
@@ -105,7 +104,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			logger.Info("Starting UDP server", zap.Int("port", 30321))
+			logger.Info("Starting UDP server", zap.Int("port", *udpPort))
 			udpServer.Start(shutdownCtx)
 		}()
 	}

@@ -10,6 +10,9 @@ const CONSOLE_ERROR: React.CSSProperties = {
 const CONSOLE_INFO: React.CSSProperties = {
   color: '#40a6ce',
 };
+const CONSOLE_USER_CHAT: React.CSSProperties = {
+  color: '#2ced0e',
+};
 
 interface ConsoleProps {
   lines: Array<{ msg: string; logLevel: LogLevel }>;
@@ -18,9 +21,10 @@ export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
   return (
     <div
       style={{
-        height: '80px',
-        resize: 'vertical',
-        maxWidth: '80ch',
+        height: '200px',
+        resize: 'both',
+        width: '80ch',
+        maxWidth: '200ch',
         backgroundColor: '#282A36',
         borderRadius: '4px',
         border: '1px solid #aaa',
@@ -43,6 +47,9 @@ export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
             break;
           case LogLevel.Info:
             MsgCssExtra = CONSOLE_INFO;
+            break;
+          case LogLevel.UserChat:
+            MsgCssExtra = CONSOLE_USER_CHAT;
             break;
         }
         return (

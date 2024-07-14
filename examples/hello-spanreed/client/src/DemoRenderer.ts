@@ -89,7 +89,7 @@ export class DemoRenderer {
 
       const f32 = new Float32Array(this.cpuInstanceBuffer, 16 * i);
       f32[0] = instance.x;
-      f32[1] = instance.y;
+      f32[1] = 400 - instance.y;
       f32[2] = instance.radius;
 
       const u8 = new Uint8Array(this.cpuInstanceBuffer, 16 * i + 12);

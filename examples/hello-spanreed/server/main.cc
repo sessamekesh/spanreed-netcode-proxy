@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <random>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -21,7 +22,11 @@ struct ConnectedClient {
 
   std::uint64_t last_send_time{};
 
+  std::uint64_t last_rotate_colors_time{};
+
   std::string client_name{};
+
+  HelloSpanreed::Color dot_color{};
 };
 
 struct QueuedClientMessage {
@@ -42,6 +47,8 @@ struct DrawnDot {
   float x;
   float y;
   float t;
+  float radius;
+  HelloSpanreed::Color color;
 };
 
 struct WorldState {
@@ -60,6 +67,25 @@ void handle_client_message(SOCKET sock,
                            const std::uint8_t* app_data_bytes,
                            size_t app_data_len, sockaddr_in src);
 
+static HelloSpanreed::Color get_client_color() {
+  static int next_color = 0;
+  next_color++;
+
+  switch (next_color % 5) {
+    case 0:
+      return HelloSpanreed::Color_Blue;
+    case 1:
+      return HelloSpanreed::Color_FireOrange;
+    case 2:
+      return HelloSpanreed::Color_Green;
+    case 3:
+      return HelloSpanreed::Color_Indigo;
+    case 4:
+    default:
+      return HelloSpanreed::Color_Red;
+  }
+}
+
 static bool cmp_addr(const sockaddr_in& a, const sockaddr_in& b) {
   if (a.sin_addr.S_un.S_addr != b.sin_addr.S_un.S_addr) return false;
   if (a.sin_port != b.sin_port) return false;
@@ -67,7 +93,8 @@ static bool cmp_addr(const sockaddr_in& a, const sockaddr_in& b) {
   return true;
 }
 
-constexpr long long kClientSendFrequencyUs = 50000000;
+constexpr long long kClientSendFrequencyUs = 50000;
+constexpr long long kClientRotateColorFrequencyUs = 8000000;
 
 int main() {
   std::cout << "-------- Hello Spanreed UDP Server --------" << std::endl;
@@ -135,6 +162,10 @@ int main() {
   QueuedClientMessage msg{};
   WorldState world_state{};
 
+  std::random_device rd;
+  std::mt19937 rng(rd());
+  std::normal_distribution<float> radius_dist(25.f, 8.f);
+
   auto last_frame_time = gGetTimestamp();
   while (bRunning) {
     const auto this_frame_time = gGetTimestamp();
@@ -145,92 +176,98 @@ int main() {
       dot.t -= dt_s;
     }
 
-    std::remove_copy_if(world_state.dots.begin(), world_state.dots.end(),
-                        std::back_inserter(world_state.dots),
-                        [](const DrawnDot& d) { return d.t <= 0.f; });
+    world_state.dots.erase(
+        std::remove_if(world_state.dots.begin(), world_state.dots.end(),
+                       [](const DrawnDot& d) { return d.t <= 0.f; }),
+        world_state.dots.end());
 
-    if (!gClientMessageQueue.try_dequeue(msg)) {
-      continue;
-    }
-
-    if (msg.msg == nullptr) continue;
-
-    ConnectedClient client{};
-    {
-      std::shared_lock l(gMutConnectedClients);
-      auto it = gConnectedClients.find(msg.client_id);
-      if (it == gConnectedClients.end()) continue;
-      client = it->second;
-    }
-
-    if (auto* click_msg = msg.msg->user_message_as_UserClickMessage()) {
-      std::cout << "UserClickMsg: (" << msg.client_id << "): " << click_msg->x()
-                << ", " << click_msg->y() << std::endl;
-      DrawnDot new_dot{};
-      new_dot.t = 5.f;
-      new_dot.x = click_msg->x();
-      new_dot.y = click_msg->y();
-      world_state.dots.push_back(new_dot);
-    } else if (auto* broadcast_msg =
-                   msg.msg->user_message_as_UserChatMessage()) {
-      std::cout << "UserChatMsg: (" << msg.client_id
-                << "): " << broadcast_msg->text() << std::endl;
-      flatbuffers::FlatBufferBuilder inner_msg_fbb;
-      auto user_text = inner_msg_fbb.CreateString(client.client_name);
-      auto broadcast_text =
-          inner_msg_fbb.CreateString(broadcast_msg->text()->str());
-
-      auto server_chat_msg = HelloSpanreed::CreateServerChatMessage(
-                                 inner_msg_fbb, user_text, broadcast_text)
-                                 .Union();
-      auto app_message = HelloSpanreed::CreateServerMessage(
-          inner_msg_fbb, HelloSpanreed::Message_ServerChatMessage,
-          server_chat_msg);
-      inner_msg_fbb.Finish(app_message);
-
-      uint8_t* inner_msg_data = inner_msg_fbb.GetBufferPointer();
-      size_t inner_msg_len = inner_msg_fbb.GetSize();
-
-      std::vector<ConnectedClient> broadcast_targets;
+    for (int i = 0;
+         i < 25 && gClientMessageQueue.try_dequeue(msg) && msg.msg != nullptr;
+         i++) {
+      ConnectedClient client{};
       {
         std::shared_lock l(gMutConnectedClients);
-        for (auto& [a, b] : gConnectedClients) {
-          broadcast_targets.push_back(b);
-        }
+        auto it = gConnectedClients.find(msg.client_id);
+        if (it == gConnectedClients.end()) continue;
+        client = it->second;
       }
 
-      for (const auto& target : broadcast_targets) {
-        flatbuffers::FlatBufferBuilder sfbb{};
-        auto proxy_msg_ptr = SpanreedMessage::CreateProxyMessage(
-            sfbb, target.spanreed_client_id);
-        auto app_data = sfbb.CreateVector(inner_msg_data, inner_msg_len);
-        auto dest_msg = SpanreedMessage::CreateDestinationMessage(
-            sfbb, SpanreedMessage::InnerMsg_ProxyMessage, proxy_msg_ptr.Union(),
-            app_data);
+      if (auto* click_msg = msg.msg->user_message_as_UserClickMessage()) {
+        std::cout << "UserClickMsg: (" << msg.client_id
+                  << "): " << click_msg->x() << ", " << click_msg->y()
+                  << std::endl;
+        DrawnDot new_dot{};
+        new_dot.t = 5.f;
+        new_dot.radius = radius_dist(rng);
+        new_dot.x = click_msg->x();
+        new_dot.y = click_msg->y();
+        new_dot.color = client.dot_color;
+        world_state.dots.push_back(new_dot);
+      } else if (auto* broadcast_msg =
+                     msg.msg->user_message_as_UserChatMessage()) {
+        std::cout << "UserChatMsg: (" << msg.client_id
+                  << "): " << broadcast_msg->text() << std::endl;
+        flatbuffers::FlatBufferBuilder inner_msg_fbb;
+        auto user_text = inner_msg_fbb.CreateString(client.client_name);
+        auto broadcast_text =
+            inner_msg_fbb.CreateString(broadcast_msg->text()->str());
 
-        sfbb.Finish(dest_msg);
+        auto server_chat_msg = HelloSpanreed::CreateServerChatMessage(
+                                   inner_msg_fbb, user_text, broadcast_text)
+                                   .Union();
+        auto app_message = HelloSpanreed::CreateServerMessage(
+            inner_msg_fbb, HelloSpanreed::Message_ServerChatMessage,
+            server_chat_msg);
+        inner_msg_fbb.Finish(app_message);
 
-        uint8_t* dest_msg_data = sfbb.GetBufferPointer();
-        size_t dest_msg_len = sfbb.GetSize();
+        uint8_t* inner_msg_data = inner_msg_fbb.GetBufferPointer();
+        size_t inner_msg_len = inner_msg_fbb.GetSize();
 
-        sendto(server_socket, reinterpret_cast<const char*>(dest_msg_data),
-               dest_msg_len, 0x00,
-               reinterpret_cast<const sockaddr*>(&target.spanreed_client_addr),
-               sizeof(target.spanreed_client_addr));
+        std::vector<ConnectedClient> broadcast_targets;
+        {
+          std::shared_lock l(gMutConnectedClients);
+          for (auto& [a, b] : gConnectedClients) {
+            broadcast_targets.push_back(b);
+          }
+        }
+
+        for (const auto& target : broadcast_targets) {
+          flatbuffers::FlatBufferBuilder sfbb{};
+          auto proxy_msg_ptr = SpanreedMessage::CreateProxyMessage(
+              sfbb, target.spanreed_client_id);
+          auto app_data = sfbb.CreateVector(inner_msg_data, inner_msg_len);
+          auto dest_msg = SpanreedMessage::CreateDestinationMessage(
+              sfbb, SpanreedMessage::InnerMsg_ProxyMessage,
+              proxy_msg_ptr.Union(), app_data);
+
+          sfbb.Finish(dest_msg);
+
+          uint8_t* dest_msg_data = sfbb.GetBufferPointer();
+          size_t dest_msg_len = sfbb.GetSize();
+
+          sendto(
+              server_socket, reinterpret_cast<const char*>(dest_msg_data),
+              dest_msg_len, 0x00,
+              reinterpret_cast<const sockaddr*>(&target.spanreed_client_addr),
+              sizeof(target.spanreed_client_addr));
+        }
       }
     }
 
     flatbuffers::FlatBufferBuilder app_data_builder{};
-    std::vector<HelloSpanreed::Dot> msg_dots(world_state.dots.size());
+    std::vector<HelloSpanreed::Dot> msg_dots;
     for (const auto& logical_dot : world_state.dots) {
-      msg_dots.push_back(HelloSpanreed::Dot(logical_dot.x, logical_dot.y, 1.f,
-                                            HelloSpanreed::Color_Blue));
+      // TODO (sessamekesh): Assign color on connect, round-robin starting at
+      //  random color (or instead of random, based on first connected client
+      //  name?)
+      msg_dots.push_back(HelloSpanreed::Dot(
+          logical_dot.x, logical_dot.y, logical_dot.radius, logical_dot.color));
     }
     auto dots_v = app_data_builder.CreateVectorOfStructs(msg_dots);
     auto game_state_msg =
         HelloSpanreed::CreateServerGameStateMessage(app_data_builder, dots_v);
     auto app_data_v = HelloSpanreed::CreateServerMessage(
-        app_data_builder, HelloSpanreed::Message_ServerChatMessage,
+        app_data_builder, HelloSpanreed::Message_ServerGameStateMessage,
         game_state_msg.Union());
     app_data_builder.Finish(app_data_v);
     const uint8_t* app_data = app_data_builder.GetBufferPointer();
@@ -239,6 +276,12 @@ int main() {
     {
       std::lock_guard l(gMutConnectedClients);
       for (auto& client : gConnectedClients) {
+        if (this_frame_time - client.second.last_rotate_colors_time >=
+            ::kClientRotateColorFrequencyUs) {
+          client.second.last_rotate_colors_time = this_frame_time;
+          client.second.dot_color = get_client_color();
+        }
+
         if (this_frame_time - client.second.last_send_time >=
             ::kClientSendFrequencyUs) {
           client.second.last_send_time = this_frame_time;
@@ -247,9 +290,10 @@ int main() {
           auto proxy_msg = SpanreedMessage::CreateProxyMessage(
               fbb, client.second.spanreed_client_id);
           auto app_data_v = fbb.CreateVector(app_data, app_data_len);
-          SpanreedMessage::CreateDestinationMessage(
+          auto dest_ptr = SpanreedMessage::CreateDestinationMessage(
               fbb, SpanreedMessage::InnerMsg_ProxyMessage, proxy_msg.Union(),
               app_data_v);
+          SpanreedMessage::FinishDestinationMessageBuffer(fbb, dest_ptr);
 
           uint8_t* dest_msg_data = fbb.GetBufferPointer();
           size_t dest_msg_len = fbb.GetSize();
@@ -315,7 +359,6 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
 void connection_request(
     SOCKET sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
     const std::uint8_t* app_data, size_t app_data_len, sockaddr_in src) {
-  std::cout << "Received connection request" << std::endl;
   flatbuffers::Verifier::Options opts{};
   opts.check_alignment = true;
   opts.check_nested_flatbuffers = true;
@@ -372,6 +415,7 @@ void connection_request(
   client_data.spanreed_client_addr = src;
   client_data.spanreed_client_id = request->client_id();
   client_data.client_name = client_message->name()->str();
+  client_data.dot_color = get_client_color();
 
   gConnectedClients.insert({request->client_id(), client_data});
 
@@ -394,7 +438,8 @@ void connection_request(
 
   sendto(sock, reinterpret_cast<const char*>(buf), buf_len, 0x00,
          reinterpret_cast<sockaddr*>(&src), sizeof(src));
-  std::cout << "Accepting client with ID " << request->client_id() << std::endl;
+  std::cout << "Accepting client with ID " << request->client_id()
+            << ", nickname=" << client_name << std::endl;
 }
 
 void close_connection_request(

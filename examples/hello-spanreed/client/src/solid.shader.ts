@@ -46,7 +46,7 @@ export class SolidShader {
     private readonly program: WebGLProgram,
     private readonly attribs: Attrib,
     private readonly uniforms: Uniform
-  ) {}
+  ) { }
 
   static Create(
     gl: WebGL2RenderingContext,

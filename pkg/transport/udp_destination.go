@@ -5,6 +5,7 @@ import (
 	goerrs "errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,13 +148,15 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 				if goerrs.Is(err, net.ErrClosed) {
 					s.log.Info("UDP server connection close requested - exiting connection message listening goroutine")
 					return
+				} else if strings.Contains(err.Error(), "WSAEMSGSIZE") {
+					//  WINDOWS ONLY - Unix silently discards excess data.
+					s.log.Warn("Overflow of data buffer - continuing, but may contain truncated data!", zap.Int("bytesRead", bytesRead))
 				} else {
 					s.log.Error("Error reading UDP datagram from connection, closing!", zap.Error(err))
 					return
 				}
 			}
 
-			s.log.Info("Received UDP message", zap.Int("bytesRead", bytesRead))
 			rawMsg := buf[0:bytesRead]
 			parsedMsg, msgParseError := safeParseDestinationMessage(rawMsg)
 			if msgParseError != nil {
@@ -206,7 +209,7 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 				if err != nil {
 					s.log.Warn("Could not open destination connection for client", zap.Uint32("clientId", openConnectionRequest.ClientId), zap.Error(err))
 				}
-			case closeRequest := <-s.proxyConnection.IncomingCloseRequests:
+			case closeRequest := <-s.proxyConnection.ProxyCloseRequests:
 				s.log.Info("Handle close request", zap.Uint32("clientId", closeRequest.ClientId))
 				s.onProxyRequestClose(closeRequest)
 			case msgRequest := <-s.proxyConnection.OutgoingMessageChannel:
@@ -306,11 +309,16 @@ func (s *udpSpanreedDestination) onClientMessage(msg handlers.DestinationMessage
 	SpanreedMessage.ProxyDestClientMessageAddClientId(b, msg.ClientId)
 	inner_msg := SpanreedMessage.ProxyDestClientMessageEnd(b)
 
+	var appDataLoc flatbuffers.UOffsetT
+	if msg.Data != nil {
+		appDataLoc = b.CreateByteVector(msg.Data)
+	}
+
 	SpanreedMessage.ProxyDestinationMessageStart(b)
 	SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestClientMessage)
 	SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
 	if msg.Data != nil {
-		SpanreedMessage.ProxyDestinationMessageAddAppData(b, b.CreateByteVector(msg.Data))
+		SpanreedMessage.ProxyDestinationMessageAddAppData(b, appDataLoc)
 	}
 	cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
 	b.Finish(cmsg)
@@ -355,6 +363,11 @@ func (s *udpSpanreedDestination) onProxyRequestClose(msg handlers.ClientCloseCom
 		addr:    addr,
 		payload: buf,
 	}
+
+	s.mut_destinationConnections.Lock()
+	defer s.mut_destinationConnections.Unlock()
+
+	delete(s.destinationConnections, msg.ClientId)
 
 	return nil
 }
@@ -406,7 +419,7 @@ func (s *udpSpanreedDestination) onReceiveCloseRequest(msg *SpanreedMessage.Clos
 		return
 	}
 
-	s.proxyConnection.OutgoingCloseRequests <- handlers.ClientCloseCommand{
+	s.proxyConnection.DestinationCloseRequests <- handlers.ClientCloseCommand{
 		ClientId: msg.ClientId(),
 		Reason:   string(msg.Reason()),
 		Error:    nil,

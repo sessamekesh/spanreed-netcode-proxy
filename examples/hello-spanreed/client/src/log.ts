@@ -3,6 +3,7 @@ export enum LogLevel {
   Info,
   Warning,
   Error,
+  UserChat,
 }
 
 export type LogCb = (msg: string, level?: LogLevel) => void;

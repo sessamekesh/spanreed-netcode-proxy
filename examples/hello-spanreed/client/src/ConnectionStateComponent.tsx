@@ -5,16 +5,28 @@ import { DefaultLogCb, LogCb, LogLevel, WrapLogFn } from './log';
 
 interface ConnectionStateComponentProps {
   connection?: Connection;
-  onOpenConnection?: (connection: Connection) => void;
+  onOpenConnection?: (connection?: Connection) => void;
   logCb?: LogCb;
 }
 
 export const ConnectionStateComponent: React.FC<ConnectionStateComponentProps> =
-  React.memo(({ connection, logCb }) => {
+  React.memo(({ connection, onOpenConnection, logCb }) => {
     if (connection === undefined) {
-      return <SetupConnectionComponent logCb={logCb} />;
+      return <SetupConnectionComponent logCb={logCb} onOpenConnection={onOpenConnection} />;
     }
-    return <span>Connection state component</span>;
+
+    return <div style={{
+      display: 'flex',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '8px 20px'
+    }}>
+      <p style={{ fontWeight: 700, fontSize: '18pt', margin: 0 }}>
+        {connection.type === 'websocket' ? 'Websocket' : 'WebTransport'} connection status: open
+      </p>
+      <Button onClick={() => onOpenConnection?.(undefined)}>Close</Button>
+    </div>;
   });
 
 const DiagBtnCommonStyle: React.CSSProperties = {
@@ -57,22 +69,14 @@ const SetupConnectionComponent: React.FC<SetupConnectionComponentProps> = React.
           return;
         }
 
-        wsConnection.spanreedConnection.onerror = (e) => {
-          log(`WebSocket error`, LogLevel.Error);
-        };
-        wsConnection.spanreedConnection.onmessage = (msg) => {
-          log(`WebSocket message (size=${(msg.data as ArrayBuffer).byteLength})`, LogLevel.Info);
-        };
-        wsConnection.spanreedConnection.onclose = () => {
-          log(`WebSocket connection closed`, LogLevel.Warning);
-        };
+        onOpenConnection?.(wsConnection);
       } catch (e) {
-        log(`Error connecting to WebSocket! ${(e instanceof Error ? e.message : '<unknown>')}`, LogLevel.Error);
+        log(`Error connecting to WebSocket! ${(e instanceof Error) ? e.message : (typeof e === 'string') ? e : '<unknown>'}`, LogLevel.Error);
       }
     }
 
     setLoading(false);
-  }, [setLoading, spanUrl, destUrl]);
+  }, [setLoading, spanUrl, destUrl, userName]);
 
   return <div style={{
     display: 'flex',
