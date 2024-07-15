@@ -384,7 +384,6 @@ func (p *proxy) Start(ctx context.Context) {
 				p.log.Info("Spanreed incoming destination message goroutine attempting graceful shutdown")
 				return
 			case destinationMsg := <-p.incomingDestinationMessageRecvChannel:
-				p.log.Debug("Spanreed proxy received incoming message from destination handler to forward on to client")
 				err := p.forwardDestinationMessage(destinationMsg)
 				if err == nil {
 					p.clientStore.SetDestinationRecvTimestamp(destinationMsg.ClientId, p.getNowTime())

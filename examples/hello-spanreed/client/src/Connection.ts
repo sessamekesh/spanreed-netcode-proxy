@@ -91,10 +91,14 @@ export async function connectWebsocket(
       if (verdict.accepted()) {
         resolve();
       } else {
-        reject(`destination rejected connection: ${verdict.errorReason() ?? '<unknown reason>'}`);
+        reject(
+          `destination rejected connection: ${verdict.errorReason() ?? '<unknown reason>'}`
+        );
       }
     };
-    ws.onclose = reject;
+    ws.onclose = (e) => {
+      reject(e);
+    };
   }).catch((e) => {
     ws.close();
     throw e;
