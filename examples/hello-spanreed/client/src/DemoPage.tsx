@@ -5,7 +5,13 @@ import { Console } from './Console';
 import { ConnectionStateComponent } from './ConnectionStateComponent';
 import { Connection } from './Connection';
 import * as flatbuffers from 'flatbuffers';
-import { Color, Message, ServerChatMessage, ServerGameStateMessage, ServerMessage } from './gen/hello-spanreed';
+import {
+  Color,
+  Message,
+  ServerChatMessage,
+  ServerGameStateMessage,
+  ServerMessage,
+} from './gen/hello-spanreed';
 import { COLORS } from './colors';
 import { UserClickMessage } from './gen/hello-spanreed/user-click-message';
 import { ClientMessage } from './gen/hello-spanreed/client-message';
@@ -35,12 +41,14 @@ export const DemoPage: React.FC = () => {
     Array<{ msg: string; logLevel: LogLevel }>
   >([]);
   const [connection, setConnection] = useState<Connection>();
-  const [dots, setDots] = useState<Array<{
-    x: number;
-    y: number;
-    radius: number;
-    color: Uint8Array;
-  }>>();
+  const [dots, setDots] = useState<
+    Array<{
+      x: number;
+      y: number;
+      radius: number;
+      color: Uint8Array;
+    }>
+  >();
 
   const LogFn = useCallback(
     (msg: string, logLevel: LogLevel = LogLevel.Info) => {
@@ -51,36 +59,63 @@ export const DemoPage: React.FC = () => {
   );
   const log = WrapLogFn('DemoPage', LogFn);
 
-  const onClickCanvas = useCallback((x: number, y: number) => {
-    if (!connection) return;
+  const onClickCanvas = useCallback(
+    (x: number, y: number) => {
+      if (!connection) return;
 
-    const appDataFbb = new flatbuffers.Builder(64);
-    const pClickMessage = UserClickMessage.createUserClickMessage(appDataFbb, x, y);
-    const pClientMessage = ClientMessage.createClientMessage(appDataFbb, UserMessage.UserClickMessage, pClickMessage);
-    ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
-    const appData = appDataFbb.asUint8Array();
+      const appDataFbb = new flatbuffers.Builder(64);
+      const pClickMessage = UserClickMessage.createUserClickMessage(
+        appDataFbb,
+        x,
+        y
+      );
+      const pClientMessage = ClientMessage.createClientMessage(
+        appDataFbb,
+        UserMessage.UserClickMessage,
+        pClickMessage
+      );
+      ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
+      const appData = appDataFbb.asUint8Array();
 
-    if (connection.type === 'websocket') {
-      connection.spanreedConnection.send(appData);
-      return;
-    }
-  }, [connection]);
+      if (connection.type === 'websocket') {
+        connection.spanreedConnection.send(appData);
+        return;
+      } else if (connection.type === 'webtransport') {
+        connection.writer.write(appData);
+        return;
+      }
+    },
+    [connection]
+  );
 
-  const onSubmitChat = useCallback((chat: string) => {
-    if (!connection) return;
+  const onSubmitChat = useCallback(
+    (chat: string) => {
+      if (!connection) return;
 
-    const appDataFbb = new flatbuffers.Builder(64);
-    const pChatString = appDataFbb.createString(chat);
-    const pChatMessage = UserChatMessage.createUserChatMessage(appDataFbb, pChatString);
-    const pClientMessage = ClientMessage.createClientMessage(appDataFbb, UserMessage.UserChatMessage, pChatMessage);
-    ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
-    const payload = appDataFbb.asUint8Array();
+      const appDataFbb = new flatbuffers.Builder(64);
+      const pChatString = appDataFbb.createString(chat);
+      const pChatMessage = UserChatMessage.createUserChatMessage(
+        appDataFbb,
+        pChatString
+      );
+      const pClientMessage = ClientMessage.createClientMessage(
+        appDataFbb,
+        UserMessage.UserChatMessage,
+        pChatMessage
+      );
+      ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
+      const payload = appDataFbb.asUint8Array();
 
-    if (connection.type === 'websocket') {
-      connection.spanreedConnection.send(payload);
-      return;
-    }
-  }, [connection]);
+      if (connection.type === 'websocket') {
+        connection.spanreedConnection.send(payload);
+        return;
+      } else if (connection.type === 'webtransport') {
+        connection.writer.write(payload);
+        return;
+      }
+    },
+    [connection]
+  );
 
   useEffect(() => {
     if (connection === undefined) return;
@@ -103,12 +138,19 @@ export const DemoPage: React.FC = () => {
 
         switch (serverMessage.messageType()) {
           case Message.ServerChatMessage: {
-            const gameMessage = serverMessage.message(new ServerChatMessage()) as ServerChatMessage;
-            LogFn(`[${gameMessage.user()}]: ${gameMessage.text()}`, LogLevel.UserChat);
+            const gameMessage = serverMessage.message(
+              new ServerChatMessage()
+            ) as ServerChatMessage;
+            LogFn(
+              `[${gameMessage.user()}]: ${gameMessage.text()}`,
+              LogLevel.UserChat
+            );
             break;
           }
           case Message.ServerGameStateMessage: {
-            const gameState = serverMessage.message(new ServerGameStateMessage()) as ServerGameStateMessage;
+            const gameState = serverMessage.message(
+              new ServerGameStateMessage()
+            ) as ServerGameStateMessage;
             const gameDots: typeof dots = [];
             const dotsCt = gameState.dotsLength();
             for (let dotIdx = 0; dotIdx < dotsCt; dotIdx++) {
@@ -125,10 +167,75 @@ export const DemoPage: React.FC = () => {
             break;
           }
           default:
-            log('Unexpected server message type, cannot process', LogLevel.Warning);
+            log(
+              'Unexpected server message type, cannot process',
+              LogLevel.Warning
+            );
             break;
         }
       };
+
+      return () => {
+        setDots(undefined);
+        connection.spanreedConnection.close();
+      };
+    } else if (connection.type === 'webtransport') {
+      connection.spanreedConnection.closed.then((closeEvent) => {
+        log('Spanreed connection is closing', LogLevel.Info);
+        setConnection(undefined);
+      });
+
+      (async () => {
+        while (true) {
+          const { done, value } = await connection.reader.read();
+          if (done || !value) {
+            break;
+          }
+
+          const fbb = new flatbuffers.ByteBuffer(new Uint8Array(value));
+          const serverMessage = ServerMessage.getRootAsServerMessage(fbb);
+
+          switch (serverMessage.messageType()) {
+            case Message.ServerChatMessage: {
+              const gameMessage = serverMessage.message(
+                new ServerChatMessage()
+              ) as ServerChatMessage;
+              LogFn(
+                `[${gameMessage.user()}]: ${gameMessage.text()}`,
+                LogLevel.UserChat
+              );
+              break;
+            }
+            case Message.ServerGameStateMessage: {
+              const gameState = serverMessage.message(
+                new ServerGameStateMessage()
+              ) as ServerGameStateMessage;
+              const gameDots: typeof dots = [];
+              const dotsCt = gameState.dotsLength();
+              for (let dotIdx = 0; dotIdx < dotsCt; dotIdx++) {
+                const dot = gameState.dots(dotIdx);
+                if (!dot) continue;
+                gameDots.push({
+                  color: mapColor(dot.color()),
+                  radius: dot.radius(),
+                  x: dot.x(),
+                  y: dot.y(),
+                });
+              }
+              setDots(gameDots);
+              break;
+            }
+            default:
+              log(
+                'Unexpected server message type, cannot process',
+                LogLevel.Warning
+              );
+              break;
+          }
+        }
+
+        connection.spanreedConnection.close();
+      })();
 
       return () => {
         setDots(undefined);
@@ -143,7 +250,11 @@ export const DemoPage: React.FC = () => {
     const hInterval = setInterval(() => {
       const appDataFbb = new flatbuffers.Builder(64);
       const pPingMessage = UserPingMessage.createUserPingMessage(appDataFbb);
-      const pClientMessage = ClientMessage.createClientMessage(appDataFbb, UserMessage.UserPingMessage, pPingMessage);
+      const pClientMessage = ClientMessage.createClientMessage(
+        appDataFbb,
+        UserMessage.UserPingMessage,
+        pPingMessage
+      );
       ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
       const payload = appDataFbb.asUint8Array();
 
@@ -169,8 +280,14 @@ export const DemoPage: React.FC = () => {
         Hello Spanreed Client
       </span>
       <DemoCanvas logFn={LogFn} dots={dots} onClick={onClickCanvas} />
-      <ConnectionStateComponent logCb={LogFn} connection={connection} onOpenConnection={setConnection} />
-      {connection !== undefined && <ChatBox Nickname={connection.userName} onSubmit={onSubmitChat} />}
+      <ConnectionStateComponent
+        logCb={LogFn}
+        connection={connection}
+        onOpenConnection={setConnection}
+      />
+      {connection !== undefined && (
+        <ChatBox Nickname={connection.userName} onSubmit={onSubmitChat} />
+      )}
       <Console lines={lines} />
     </OuterContainer>
   );

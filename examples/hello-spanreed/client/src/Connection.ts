@@ -16,6 +16,8 @@ type WebtransportConnection = {
   type: 'webtransport';
   spanreedConnection: WebTransport;
   userName: string;
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  writer: WritableStreamDefaultWriter<Uint8Array>;
 };
 
 export type Connection = WebsocketConnection | WebtransportConnection;
@@ -113,4 +115,83 @@ export async function connectWebsocket(
   );
 
   return { type: 'websocket', spanreedConnection: ws, userName };
+}
+
+export async function connectWebtransport(
+  spanreedAddress: string,
+  backendAddress: string,
+  userName: string,
+  logCb: LogCb
+): Promise<Connection> {
+  const log = WrapLogFn('connectWebtransport', logCb);
+  const wt = new WebTransport(spanreedAddress, {
+    requireUnreliable: true,
+  });
+
+  await wt.ready;
+
+  const bidiStream = await wt.createBidirectionalStream();
+
+  const reader = bidiStream.readable.getReader();
+  const writer = bidiStream.writable.getWriter();
+
+  const appDataFbb = new Builder(64);
+  const pUserNameString = appDataFbb.createString(userName);
+  const pUserConnectMessage = UserConnectMessage.createUserConnectMessage(
+    appDataFbb,
+    pUserNameString
+  );
+  const pClientMessage = ClientMessage.createClientMessage(
+    appDataFbb,
+    UserMessage.UserConnectMessage,
+    pUserConnectMessage
+  );
+  ClientMessage.finishClientMessageBuffer(appDataFbb, pClientMessage);
+  const appData = appDataFbb.asUint8Array();
+
+  const fbb = new Builder(64);
+  const pBackendAddress = fbb.createString(backendAddress);
+  const pAppData = fbb.createByteVector(appData);
+  const pConnectClientMessage = ConnectClientMessage.createConnectClientMessage(
+    fbb,
+    pBackendAddress,
+    pAppData
+  );
+  ConnectClientMessage.finishConnectClientMessageBuffer(
+    fbb,
+    pConnectClientMessage
+  );
+  const connectClientPayload = fbb.asUint8Array();
+
+  log(
+    `Connection opened! Attempting to authorize (payload size=${connectClientPayload})`,
+    LogLevel.Debug
+  );
+  writer.write(connectClientPayload);
+
+  const resp = await reader.read();
+  if (resp.done) throw new Error('Failed to read from reader, closed');
+  if (resp.value instanceof Uint8Array) {
+    const fbb = new ByteBuffer(resp.value);
+    const verdict = ConnectClientVerdict.getRootAsConnectClientVerdict(fbb);
+
+    if (!verdict.accepted()) {
+      throw new Error(
+        `Destination rejected connection: ${verdict.errorReason() ?? '<unknown reason>'}`
+      );
+    }
+  }
+
+  log(
+    `Connection opened successfully! Message may now be forwarded to the destination server through this WebTransport connection`,
+    LogLevel.Debug
+  );
+
+  return {
+    type: 'webtransport',
+    reader,
+    writer,
+    spanreedConnection: wt,
+    userName,
+  };
 }

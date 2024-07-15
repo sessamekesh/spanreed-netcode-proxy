@@ -188,10 +188,8 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 }
 
 func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
-	// TODO (sessamekesh): Create mux, attach listener, listen on HTTP at given location. Start goroutines for errything.
 	mux := http.NewServeMux()
 	mux.HandleFunc(ws.params.ListenEndpoint, func(w http.ResponseWriter, r *http.Request) {
-		ws.log.Info("ASDFASDF")
 		ws.onWsRequest(ctx, w, r)
 	})
 

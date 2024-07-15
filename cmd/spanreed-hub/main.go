@@ -38,13 +38,27 @@ func main() {
 
 	//
 	// Flags
+	certPath := flag.String("cert", "", "Path to TLS cert file (requires key to be set also)")
+	keyPath := flag.String("key", "", "Path to TLS key file (reqwuires cert to be set also)")
+
 	useWebsockets := flag.Bool("websockets", true, "Set to false to disable WebSocket support")
 	wsPort := flag.Int("ws-port", 3000, "Port on which the WebSocket server should run")
 	wsEndpoint := flag.String("ws-endpoint", "/ws", "HTTP endpoint that listens for WebSocket connections")
 
+	useWebtransport := flag.Bool("webtransport", false, "Set true to enable WebTransport support. Requires cert and key to be set.")
+	wtPort := flag.Int("wt-port", 3001, "Port on which WebTransport server should run")
+	wtEndpoint := flag.String("wt-endpoint", "/wt", "HTTP3 endpoint that listens for WebTransport connections")
+
 	useUdp := flag.Bool("udp", true, "Set to false to disable UDP support")
 	udpPort := flag.Int("udp-port", 30321, "Port on which the UDP server operates")
 	flag.Parse()
+
+	//
+	// Flag validation
+	if (*keyPath == "") != (*certPath == "") {
+		logger.Error("Cannot use TLS without providing both key and cert")
+		return
+	}
 
 	//
 	// Proxy setup + attach client handlers
@@ -58,6 +72,7 @@ func main() {
 	wg := sync.WaitGroup{}
 
 	if *useWebsockets {
+		// TODO (sessamekesh): TLS here
 		wsHandler, wsHandlerErr := proxy.CreateClientMessageHandler("WebSocket")
 		if wsHandlerErr != nil {
 			logger.Error("Failed to create WebSocket client message handler", zap.Error(wsHandlerErr))
@@ -79,6 +94,32 @@ func main() {
 		go func() {
 			defer wg.Done()
 			wsServer.Start(shutdownCtx)
+		}()
+	}
+
+	if *useWebtransport && *keyPath != "" && *certPath != "" {
+		wtHandler, wtErr := proxy.CreateClientMessageHandler("WebTransport")
+		if wtErr != nil {
+			logger.Error("Failed to create WebTransport client message handler", zap.Error(wtErr))
+			return
+		}
+
+		wtServer, wtServerErr := transport.CreateWebtransportHandler(wtHandler, transport.WebtransportSpanreedClientParams{
+			ListenAddress:  fmt.Sprintf(":%d", *wtPort),
+			ListenEndpoint: *wtEndpoint,
+			Logger:         logger,
+			CertPath:       *certPath,
+			KeyPath:        *keyPath,
+		})
+		if wtServerErr != nil {
+			logger.Error("Failed to create WebTransport server", zap.Error(wtServerErr))
+			return
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wtServer.Start(shutdownCtx)
 		}()
 	}
 

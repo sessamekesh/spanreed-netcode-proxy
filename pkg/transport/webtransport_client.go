@@ -1,0 +1,196 @@
+package transport
+
+import (
+	"context"
+	"crypto/tls"
+	"net/http"
+	"sync"
+
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
+	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/handlers"
+	utils "github.com/sessamekesh/spanreed-netcode-proxy/pkg/util"
+	"go.uber.org/zap"
+)
+
+type webtransportSpanreedClient struct {
+	proxyConnection        *handlers.ClientMessageHandler
+	clientConnectionRouter *clientConnectionRouter
+
+	log       *zap.Logger
+	stringGen *utils.RandomStringGenerator
+
+	params WebtransportSpanreedClientParams
+
+	s *webtransport.Server
+}
+
+type WebtransportSpanreedClientParams struct {
+	ListenAddress  string
+	ListenEndpoint string
+
+	Logger *zap.Logger
+
+	CertPath string
+	KeyPath  string
+}
+
+func CreateWebtransportHandler(proxyConnection *handlers.ClientMessageHandler, params WebtransportSpanreedClientParams) (*webtransportSpanreedClient, error) {
+	logger := params.Logger
+	if logger == nil {
+		logger = zap.Must(zap.NewDevelopment())
+	}
+
+	router, err := CreateClientConnectionRouter(proxyConnection, logger.With(zap.String("transport", "WebTransport")))
+	if err != nil {
+		return nil, err
+	}
+
+	return &webtransportSpanreedClient{
+		proxyConnection:        proxyConnection,
+		clientConnectionRouter: router,
+		log:                    logger.With(zap.String("handler", "WebTransport")),
+		params:                 params,
+	}, nil
+}
+
+func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	log := wt.log.With(zap.String("wtConnId", wt.stringGen.GetRandomString(6)))
+
+	log.Info("New WebTransport request")
+
+	session, sessionError := wt.s.Upgrade(w, r)
+	if sessionError != nil {
+		log.Warn("Failed to upgrade HTTP3 request to a WebTransport session", zap.Error(sessionError))
+		w.WriteHeader(500)
+		return
+	}
+
+	// TODO (sessamekesh): How to close?
+	defer session.CloseWithError(1, "Regular closing?")
+
+	routeContext, routeCancel := context.WithCancel(ctx)
+	defer routeCancel()
+
+	bidiStream, bidiStreamError := session.AcceptStream(routeContext)
+
+	if bidiStreamError != nil {
+		log.Warn("Failed to get bidi stream", zap.Error(bidiStreamError))
+		return
+	}
+
+	clientRouter, crErr := wt.clientConnectionRouter.OpenConnection(routeContext)
+	if crErr != nil {
+		log.Error("Failed to establish client router for new client")
+		return
+	}
+	defer wt.clientConnectionRouter.Remove(clientRouter.ClientId)
+
+	log = log.With(zap.Uint32("clientId", clientRouter.ClientId))
+
+	//
+	// Main loop
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		log.Info("Starting WebTransport proxy listener goroutine")
+		defer log.Info("Stopped WebSocket proxy listener goroutine")
+		defer wg.Done()
+
+		for {
+			select {
+			case <-session.Context().Done():
+				routeCancel()
+			case <-routeContext.Done():
+			case <-clientRouter.ProxyInitiatedClose:
+				log.Info("Proxy listener attempting graceful shutdown")
+				bidiStream.Close()
+				routeCancel()
+				return
+			case logicalMessage := <-clientRouter.OutgoingMessages:
+				bytesWritten, writeErr := bidiStream.Write(logicalMessage)
+				if writeErr != nil {
+					log.Warn("Error writing to bidi stream", zap.Error(writeErr), zap.Int("bytesWritten", bytesWritten))
+				}
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		log.Info("Starting WebTransport connection listener goroutine")
+		defer log.Info("Stopped WebTransport connection listener goroutine")
+		defer wg.Done()
+		defer func() { clientRouter.ClientInitiatedClose <- true }()
+		defer routeCancel()
+
+		for {
+			readBuffer := make([]byte, 0, 2048)
+			readBytes, readErr := bidiStream.Read(readBuffer)
+			if readErr != nil {
+				log.Error("Unexpected read error", zap.Error(readErr))
+				return
+			}
+
+			clientRouter.IncomingMessages <- readBuffer[0:readBytes]
+		}
+	}()
+
+	wg.Wait()
+}
+
+func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
+	certs, err := tls.LoadX509KeyPair(wt.params.CertPath, wt.params.KeyPath)
+	if err != nil {
+		wt.log.Error("Failed to load certificate pair", zap.Error(err))
+		return err
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{certs},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(wt.params.ListenEndpoint, func(w http.ResponseWriter, r *http.Request) {
+		wt.log.Info("Request!")
+		wt.onWtRequest(ctx, w, r)
+	})
+
+	wt.s = &webtransport.Server{
+		H3: http3.Server{
+			Addr:      wt.params.ListenAddress,
+			TLSConfig: tlsConfig,
+			Handler:   mux,
+		},
+		CheckOrigin: func(r *http.Request) bool {
+			// TODO (sessamekesh): Implement this properly
+			return true
+		},
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		wt.log.Info("Starting WebTransport HTTP3 server!", zap.String("path", wt.params.ListenAddress))
+		defer wt.log.Info("Shutdown WebTransport HTTP3 server")
+		defer wg.Done()
+
+		if err := wt.s.ListenAndServeTLS(wt.params.CertPath, wt.params.KeyPath); err != nil {
+			wt.log.Error("Unexpected WebTransport server close!", zap.Error(err))
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		if err := wt.clientConnectionRouter.Start(ctx); err != nil {
+			wt.log.Error("Error on ClientConnectionRouter run", zap.Error(err))
+		}
+	}()
+
+	wg.Wait()
+
+	wt.log.Info("All WebTransport server goroutines finished. Exiting gracefully.")
+	return nil
+}
