@@ -1,16 +1,3 @@
-TODO: Simplify the exchange.
-
-Client Transport:
-* Forwards "opening" messages, receives "verdict" yes/no from destination transport
-* Forwards "messages" (only after verdict is received, other messages are dropped)
-
-Destination transport:
-* Decides (asynchronously) if a client forwarding should be connected or not (may involve destination)
-* Forwards messages from destination to appropriate client ID
-
-For ping/pong: messages do have recv/process timestamps sent along, it's up to client/destination handlers
-  to implement ping/pong on their own in AppData.
-
 # spanreed-netcode-proxy
 
 Proxy to forward messages from Web APIs (WebTransport etc.) to game servers that use UDP/TCP
@@ -21,34 +8,44 @@ Works via ~~an extremely frantic fabrial operator~~ excellent Go support for Web
 
 # Basic Usage
 
-## Client / Server Connections
+A binary has been provided that includes support for forwarding UDP packets, and receiving WebSocket and WebTransport client connections. This binary can be found under [cmd/spanreed-hub](cmd/spanreed-hub) (be sure to read the associated README.md file).
 
-To establish a new connection, send a `ClientConnectionRequest` message to a Spanreed proxy. The proxy extracts information about how to contact the destination game server, assigns a new client ID to the connection, and sends a `SpanreedConnectionRequest` to the destination game server.
+# Examples
+
+## Hello, Spanreed!
+
+Simple app where players click on a canvas to spawn short-lived colorful dots, and can send chat messages to everyone attached to the game server. Found under [examples/hello-spanreed](examples/hello-spanreed/).
+
+# Client / Server Connections
+
+_Message formats use flatbuffers - schema and pre-compiled files are included in the flatbuffers directory_.
+
+To establish a new connection, send a `UserConnectMessage` message to a Spanreed proxy. The proxy extracts information about how to contact the destination game server, assigns a new client ID to the connection, and sends a `ProxyDestinationMessage` to the destination game server.
+
+The destination server decides if it wants to accept the connection, and returns a `DestinationMessage` message with a `ConnectionVerdict` back to the proxy. The proxy then forwards this decision back to the client in the form of a `ConnectClientVerdict`.
 
 ```mermaid
 sequenceDiagram
-    Client->>Spanreed: ClientConnectionRequest<br>(destination address)
-    Spanreed->>Server: SpanreedConnectionRequest<br>(clientId)
-    Server->>Spanreed: DestinationVerdict<br>(yes/no verdict)
-    Spanreed->>Client: SpanreedVerdict<br>(yes/no verdict)
+    Client->>Spanreed: UserConnectMessage<br>(destination address)
+    Spanreed->>Server: ProxyDestinationMessage<br>(clientId)
+    Server->>Spanreed: DestinationMessage<br>(yes/no verdict)
+    Spanreed->>Client: ConnectClientVerdict<br>(yes/no verdict)
 ```
 
-TODO (sessamekesh): Write a simple demo example for C++ backend and TypeScript frontend and reference it here.
+## Client send/receive flow
 
-To close a connection from the client side, either:
-1. Close the underlying transport connection
-2. Send a `ClientDisconnectionRequest` message to request a graceful disconnection
-3. Fail to send a message for `SPAN_CLIENT_MSG_TIMEOUT` seconds (default: 60).
+Client data is received as raw binary information, with no additional notion of a client ID. WebSocket and WebTransport connections are exactly that - connections - so no client metadata is required after the connection is established.
 
-To close a connection from the server side, either:
-1. Close the underlying transport connection (if appropriate)
-2. Send a `DestinationDisconnectionRequest` message to request a graceful disconnection
-3. Fail to send a message for `SPAN_DEST_MSG_TIMEOUT` seconds (default: 60).
+## Destination send/receive flow.
 
-# Message Formats
+Destination data is sent from Spanreed as a `ProxyDestinationMessage`, which contains three possible types of sub-message:
+1. `ProxyDestConnectionRequest`, used when establishing a new connection for a new client.
+2. `ProxyDestClientMessage`, used when forwarding a message from a previously connected client.
+3. `ProxyDestCloseConnection`, used when the proxy is requesting a connection close for some reason.
 
-Read about message formats in [MESSAGE_FORMATS.md](./MESSAGE_FORMATS.md).
+Each of these types also allows `app_data` to be set, which is an application-specific buffer of arbitrary bytes.
 
-> TODO (sessamekesh): Actually write these.
-
-I've provided parsers for a few languages (C++, TypeScript, Rust, Go) under the `parser_utilities` directory.
+Destination data should be sent to Spanreed in the form of a `DestinationMessage`, which can similarly contain one of three possible types of sub-message:
+1. `ConnectionVerdict`, gives a yes/no response for allowing a client connection with a given client ID.
+2. `ProxyMessage`, requests a message to be forwarded on to a connected client.
+3. `CloseConnection`, requests that a client connection be closed.
