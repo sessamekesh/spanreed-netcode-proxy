@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DemoCanvas } from './DemoCanvas';
 import { DefaultLogCb, LogLevel, WrapLogFn } from './log';
 import { Console } from './Console';
@@ -53,11 +53,12 @@ export const DemoPage: React.FC = () => {
   const LogFn = useCallback(
     (msg: string, logLevel: LogLevel = LogLevel.Info) => {
       DefaultLogCb(msg, logLevel);
+      console.log(msg);
       setLines((old) => [...old, { msg, logLevel }]);
     },
-    [setLines]
+    [setLines, DefaultLogCb]
   );
-  const log = WrapLogFn('DemoPage', LogFn);
+  const log = useMemo(() => WrapLogFn('DemoPage', LogFn), [WrapLogFn, LogFn]);
 
   const onClickCanvas = useCallback(
     (x: number, y: number) => {
@@ -181,7 +182,10 @@ export const DemoPage: React.FC = () => {
       };
     } else if (connection.type === 'webtransport') {
       connection.spanreedConnection.closed.then((closeEvent) => {
-        log('Spanreed connection is closing', LogLevel.Info);
+        log('Spanreed connection is closing naturally', LogLevel.Info);
+      }).catch((e) => {
+        log(`Spanreed connection closed with error: ${e}`, LogLevel.Error);
+      }).finally(() => {
         setConnection(undefined);
       });
 
@@ -234,15 +238,25 @@ export const DemoPage: React.FC = () => {
           }
         }
 
-        connection.spanreedConnection.close();
+        connection.writer.abort().catch((e) => {
+          log(`Writable stream abort error: ${e}`, LogLevel.Error);
+        });
       })();
 
       return () => {
         setDots(undefined);
-        connection.spanreedConnection.close();
+        // connection.writer.abort().then(() => {
+        //   log(`Successfully closed writable stream`, LogLevel.Info);
+        // }).catch((e) => {
+        //   log(`Writable stream abort error: ${e}`, LogLevel.Error);
+        // });
+        connection.spanreedConnection.close({
+          closeCode: 0,
+          reason: 'Client requested shutdown',
+        });
       };
     }
-  }, [connection, setConnection, setDots]);
+  }, [connection, setConnection, setDots, log, LogFn]);
 
   useEffect(() => {
     if (!connection) return;
@@ -260,6 +274,9 @@ export const DemoPage: React.FC = () => {
 
       if (connection.type === 'websocket') {
         connection.spanreedConnection.send(payload);
+        return;
+      } else if (connection.type === 'webtransport') {
+        connection.writer.write(payload);
         return;
       }
     }, 3000);

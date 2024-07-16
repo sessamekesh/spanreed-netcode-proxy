@@ -206,7 +206,7 @@ int main() {
       } else if (auto* broadcast_msg =
                      msg.msg->user_message_as_UserChatMessage()) {
         std::cout << "UserChatMsg: (" << msg.client_id
-                  << "): " << broadcast_msg->text() << std::endl;
+                  << "): " << broadcast_msg->text()->str() << std::endl;
         flatbuffers::FlatBufferBuilder inner_msg_fbb;
         auto user_text = inner_msg_fbb.CreateString(client.client_name);
         auto broadcast_text =

@@ -130,10 +130,8 @@ export async function connectWebtransport(
 
   await wt.ready;
 
-  const bidiStream = await wt.createBidirectionalStream();
-
-  const reader = bidiStream.readable.getReader();
-  const writer = bidiStream.writable.getWriter();
+  const reader = wt.datagrams.readable.getReader();
+  const writer = wt.datagrams.writable.getWriter();
 
   const appDataFbb = new Builder(64);
   const pUserNameString = appDataFbb.createString(userName);
@@ -164,7 +162,7 @@ export async function connectWebtransport(
   const connectClientPayload = fbb.asUint8Array();
 
   log(
-    `Connection opened! Attempting to authorize (payload size=${connectClientPayload})`,
+    `Connection opened! Attempting to authorize (payload size=${connectClientPayload.length})`,
     LogLevel.Debug
   );
   writer.write(connectClientPayload);

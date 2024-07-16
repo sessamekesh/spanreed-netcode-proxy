@@ -72,13 +72,6 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 	routeContext, routeCancel := context.WithCancel(ctx)
 	defer routeCancel()
 
-	bidiStream, bidiStreamError := session.AcceptStream(routeContext)
-
-	if bidiStreamError != nil {
-		log.Warn("Failed to get bidi stream", zap.Error(bidiStreamError))
-		return
-	}
-
 	clientRouter, crErr := wt.clientConnectionRouter.OpenConnection(routeContext)
 	if crErr != nil {
 		log.Error("Failed to establish client router for new client")
@@ -104,13 +97,18 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 			case <-routeContext.Done():
 			case <-clientRouter.ProxyInitiatedClose:
 				log.Info("Proxy listener attempting graceful shutdown")
-				bidiStream.Close()
+				session.CloseWithError(0, "Attempting graceful shutdown at request of proxy or destination")
 				routeCancel()
 				return
 			case logicalMessage := <-clientRouter.OutgoingMessages:
-				bytesWritten, writeErr := bidiStream.Write(logicalMessage)
+				writeErr := session.SendDatagram(logicalMessage)
 				if writeErr != nil {
-					log.Warn("Error writing to bidi stream", zap.Error(writeErr), zap.Int("bytesWritten", bytesWritten))
+					if cerr := session.Context().Err(); cerr != nil {
+						routeCancel()
+						return
+					} else {
+						log.Warn("Error writing to bidi stream", zap.Error(writeErr))
+					}
 				}
 			}
 		}
@@ -125,14 +123,13 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 		defer routeCancel()
 
 		for {
-			readBuffer := make([]byte, 0, 2048)
-			readBytes, readErr := bidiStream.Read(readBuffer)
+			readBuffer, readErr := session.ReceiveDatagram(routeContext)
 			if readErr != nil {
 				log.Error("Unexpected read error", zap.Error(readErr))
 				return
 			}
 
-			clientRouter.IncomingMessages <- readBuffer[0:readBytes]
+			clientRouter.IncomingMessages <- readBuffer
 		}
 	}()
 

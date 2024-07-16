@@ -398,7 +398,7 @@ func (s *udpSpanreedDestination) onReceiveProxyMessage(msg *SpanreedMessage.Prox
 
 	_, has := s.destinationConnections[msg.ClientId()]
 	if !has {
-		s.log.Warn("Received a verdict for a client that's not registered", zap.Uint32("clientId", msg.ClientId()))
+		s.log.Warn("Received a message for a client that's not registered", zap.Uint32("clientId", msg.ClientId()))
 		return
 	}
 

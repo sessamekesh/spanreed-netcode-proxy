@@ -151,12 +151,24 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 		select {
 		case <-ctx.Done():
 			log.Info("Cancelling auth request wait because of shutdown request")
+			r.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
+				ClientId: clientId,
+				Reason:   "Proxy shutdown request",
+			}
 			return
 		case <-clientCloseChannel:
 			log.Info("Cancelling auth request wait because client connection closed")
+			r.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
+				ClientId: clientId,
+				Reason:   "Proxy shutdown request",
+			}
 			return
 		case <-closeRequest:
 			log.Info("Cancelling auth request because proxy cancelled")
+			r.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
+				ClientId: clientId,
+				Reason:   "Proxy shutdown request",
+			}
 			return
 		case packet := <-incomingPackets:
 			authMsg, err := safeParseConnectClientMessage(packet)
@@ -243,8 +255,13 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 			for {
 				select {
 				case <-ctx.Done():
+					r.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
+						ClientId: clientId,
+						Reason:   "Proxy shutdown request",
+					}
 					return
 				case <-clientCloseChannel:
+				case <-closeRequest:
 					r.proxyConnection.IncomingCloseRequests <- handlers.ClientCloseCommand{
 						ClientId: clientId,
 						Reason:   "Close request received from transport",
