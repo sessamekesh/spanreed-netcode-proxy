@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"strings"
@@ -35,20 +36,10 @@ type WebsocketSpanreedClientParams struct {
 
 	MaxReadMessageSize int64
 
+	CertPath string
+	KeyPath  string
+
 	Logger *zap.Logger
-}
-
-func checkOrigin(r *http.Request, params WebsocketSpanreedClientParams) bool {
-	origin := r.Header.Get("Origin")
-	if utils.Contains(origin, params.DenylistedHosts) {
-		return false
-	}
-
-	if params.AllowAllHosts {
-		return true
-	}
-
-	return utils.Contains(origin, params.AllowlistedHosts)
 }
 
 type NonBinaryMessage struct{}
@@ -72,7 +63,16 @@ func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, para
 	return &websocketSpanreedClient{
 		upgrader: &websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				return checkOrigin(r, params)
+				origin := r.Header.Get("Origin")
+				if utils.Contains(origin, params.DenylistedHosts) {
+					return false
+				}
+
+				if params.AllowAllHosts {
+					return true
+				}
+
+				return utils.Contains(origin, params.AllowlistedHosts)
 			},
 			// TODO (sessamekesh): read/write buffer size params
 		},
@@ -193,10 +193,29 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 		ws.onWsRequest(ctx, w, r)
 	})
 
+	tlsConfig, err := func() (*tls.Config, error) {
+		if ws.params.CertPath == "" || ws.params.KeyPath == "" {
+			return nil, nil
+		}
+
+		certs, certErr := tls.LoadX509KeyPair(ws.params.CertPath, ws.params.KeyPath)
+		if certErr != nil {
+			return nil, certErr
+		}
+
+		return &tls.Config{
+			Certificates: []tls.Certificate{certs},
+		}, nil
+	}()
+	if err != nil {
+		ws.log.Error("Failed to load TLS cert from provided cert/key files", zap.Error(err))
+		return err
+	}
+
 	server := &http.Server{
-		Addr:    ws.params.ListenAddress,
-		Handler: mux,
-		// TODO (sessamekesh): Additional HTTP server config here
+		Addr:      ws.params.ListenAddress,
+		Handler:   mux,
+		TLSConfig: tlsConfig,
 	}
 
 	wg := sync.WaitGroup{}
@@ -205,8 +224,14 @@ func (ws *websocketSpanreedClient) Start(ctx context.Context) error {
 		defer wg.Done()
 
 		ws.log.Sugar().Infof("Starting WebSocket server at %s", ws.params.ListenAddress)
-		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			ws.log.Error("Unexpected WebSocket server close!", zap.Error(err))
+		if ws.params.KeyPath != "" && ws.params.CertPath != "" {
+			if err := server.ListenAndServeTLS(ws.params.CertPath, ws.params.KeyPath); !errors.Is(err, http.ErrServerClosed) {
+				ws.log.Error("Unexpected WebSocket server close!", zap.Error(err))
+			}
+		} else {
+			if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				ws.log.Error("Unexpected WebSocket server close!", zap.Error(err))
+			}
 		}
 	}()
 

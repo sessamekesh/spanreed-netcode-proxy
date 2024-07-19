@@ -19,3 +19,7 @@ Supports WebSocket and WebTransport client connections, supports TCP and UDP des
 
 `-udp` _default: true_: Set to false to disable UDP support
 `-udp-port` _default: 30321_: Port on which UDP server operates.
+
+`-allow-all-hosts` _default: false_: Set true to accept connections from all hosts (except forbidden hosts)
+`-deny-hosts` _default: ""_: Comma separated list of forbidden hosts
+`-allow-hosts` _default: ""_: Comma separated list of allowed hosts (if allow-all-hosts is false)

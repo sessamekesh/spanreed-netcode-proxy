@@ -33,6 +33,10 @@ type WebtransportSpanreedClientParams struct {
 
 	CertPath string
 	KeyPath  string
+
+	AllowAllHosts    bool
+	AllowlistedHosts []string
+	DenylistedHosts  []string
 }
 
 func CreateWebtransportHandler(proxyConnection *handlers.ClientMessageHandler, params WebtransportSpanreedClientParams) (*webtransportSpanreedClient, error) {
@@ -160,8 +164,16 @@ func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
 			Handler:   mux,
 		},
 		CheckOrigin: func(r *http.Request) bool {
-			// TODO (sessamekesh): Implement this properly
-			return true
+			origin := r.Header.Get("Origin")
+			if utils.Contains(origin, wt.params.DenylistedHosts) {
+				return false
+			}
+
+			if wt.params.AllowAllHosts {
+				return true
+			}
+
+			return utils.Contains(origin, wt.params.AllowlistedHosts)
 		},
 	}
 

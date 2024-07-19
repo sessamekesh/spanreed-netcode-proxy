@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/proxy"
@@ -13,22 +14,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO (sessamekesh):
-
-/*
-Something like this:
-
-spanreedHub, err := CreateSpanreedClientServer(config)
-
-webSocketListener := CreateSpanreedWSListener(incoming)
-webTransportListener := CreateSpanreedWTListener(incoming)
-tcpClientManager := CreateSpanreedTCPClientManager(outgoing)
-udpDatagramForwarder := CreateSpanreedUDPDatagramThingy(outgoing)
-
-webSocketListener.AddDestinationRule(AllowedHostsOrWhatever)
-
-Default server (launch as Docker image) should have pretty bare bones
-*/
 func main() {
 	logger := zap.Must(zap.NewProduction())
 	if os.Getenv("APP_ENV") != "production" {
@@ -48,6 +33,10 @@ func main() {
 	useWebtransport := flag.Bool("webtransport", false, "Set true to enable WebTransport support. Requires cert and key to be set.")
 	wtPort := flag.Int("wt-port", 3001, "Port on which WebTransport server should run")
 	wtEndpoint := flag.String("wt-endpoint", "/wt", "HTTP3 endpoint that listens for WebTransport connections")
+
+	allowAllhosts := flag.Bool("allow-all-hosts", false, "Set true to accept connections from all hosts (except forbidden hosts)")
+	forbiddenHosts := flag.String("deny-hosts", "", "Comma-separated list of forbidden hosts")
+	allowedHosts := flag.String("allow-hosts", "", "Comma-separated list of allowed hosts (if allow-all-hosts is false)")
 
 	useUdp := flag.Bool("udp", true, "Set to false to disable UDP support")
 	udpPort := flag.Int("udp-port", 30321, "Port on which the UDP server operates")
@@ -80,10 +69,14 @@ func main() {
 		}
 
 		wsServer, wsServerErr := transport.CreateWebsocketHandler(wsHandler, transport.WebsocketSpanreedClientParams{
-			ListenAddress:  fmt.Sprintf(":%d", *wsPort),
-			ListenEndpoint: *wsEndpoint,
-			AllowAllHosts:  true,
-			Logger:         logger,
+			ListenAddress:    fmt.Sprintf(":%d", *wsPort),
+			ListenEndpoint:   *wsEndpoint,
+			Logger:           logger,
+			AllowAllHosts:    *allowAllhosts,
+			AllowlistedHosts: strings.Split(*allowedHosts, ","),
+			DenylistedHosts:  strings.Split(*forbiddenHosts, ","),
+			CertPath:         *certPath,
+			KeyPath:          *keyPath,
 		})
 		if wsServerErr != nil {
 			logger.Error("Failed to create WebSocket server", zap.Error(wsServerErr))
@@ -105,11 +98,14 @@ func main() {
 		}
 
 		wtServer, wtServerErr := transport.CreateWebtransportHandler(wtHandler, transport.WebtransportSpanreedClientParams{
-			ListenAddress:  fmt.Sprintf(":%d", *wtPort),
-			ListenEndpoint: *wtEndpoint,
-			Logger:         logger,
-			CertPath:       *certPath,
-			KeyPath:        *keyPath,
+			ListenAddress:    fmt.Sprintf(":%d", *wtPort),
+			ListenEndpoint:   *wtEndpoint,
+			Logger:           logger,
+			CertPath:         *certPath,
+			KeyPath:          *keyPath,
+			AllowAllHosts:    *allowAllhosts,
+			AllowlistedHosts: strings.Split(*allowedHosts, ","),
+			DenylistedHosts:  strings.Split(*forbiddenHosts, ","),
 		})
 		if wtServerErr != nil {
 			logger.Error("Failed to create WebTransport server", zap.Error(wtServerErr))

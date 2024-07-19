@@ -40,7 +40,7 @@ ninja hello-spanreed-server
 To test using only WebSockets, just start the basic server with no options:
 
 ```
-go run ../../cmd/spanreed-hub/main.go
+go run ../../cmd/spanreed-hub/main.go -allow-all-hosts
 ```
 
 To use WebTransport locally, use something like [mkcert](https://github.com/FiloSottile/mkcert) to set up a local certificate authority (CA) for testing. Alternatively, you can use something like `openssl` to generate a public/private key pair, and tell your browser that it's OK to use that particular pair.
@@ -48,7 +48,7 @@ To use WebTransport locally, use something like [mkcert](https://github.com/Filo
 Whatever route you go, run the proxy with additional flags to support WebTransport:
 
 ```
-go run ../../cmd/spanreed-hub/main.go -webtransport -wt-port 3000 -cert /path/to/cert.pem -key /path/to/cert-key.pem
+go run ../../cmd/spanreed-hub/main.go -allow-all-hosts -webtransport -wt-port 3000 -cert /path/to/cert.pem -key /path/to/cert-key.pem
 ```
 
 See the [spanreed-hub README file](../../cmd/spanreed-hub/README.md) for more information about running the proxy.
