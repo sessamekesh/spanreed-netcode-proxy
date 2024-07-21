@@ -60,7 +60,7 @@ func (store *ClientStore) ForAllClients(cb func(clientId uint32)) {
 	store.mut_clientConnections.Lock()
 	defer store.mut_clientConnections.Unlock()
 
-	for clientId, _ := range store.clientConnections {
+	for clientId := range store.clientConnections {
 		cb(clientId)
 	}
 }
