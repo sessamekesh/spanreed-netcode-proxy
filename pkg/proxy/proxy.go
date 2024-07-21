@@ -412,7 +412,6 @@ func (p *proxy) Start(ctx context.Context) {
 		defer wg.Done()
 		defer p.log.Info("Timeout goroutine exiting! Hopefully because this was closed!")
 
-		// TODO (sessamekesh): Move this duration to configuration too
 		ticker := time.NewTicker(p.connectionKickLoopTime)
 		defer ticker.Stop()
 
@@ -436,7 +435,9 @@ func (p *proxy) Start(ctx context.Context) {
 
 	wg.Wait()
 
-	// TODO (sessamekesh): Begin graceful shutdown procedure here (notify all connected clients and destinations of shutdown)
+	p.clientStore.ForAllClients(func(clientId uint32) {
+		p.kickClient(clientId, fmt.Errorf("proxy shutdown"))
+	})
 }
 
 func (p *proxy) forwardClientMessage(msg handlers.ClientMessage) error {

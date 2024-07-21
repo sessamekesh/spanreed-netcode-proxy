@@ -37,6 +37,9 @@ type WebtransportSpanreedClientParams struct {
 	AllowAllHosts    bool
 	AllowlistedHosts []string
 	DenylistedHosts  []string
+
+	IncomingMessageQueueLength uint32
+	OutgoingMessageQueueLength uint32
 }
 
 func CreateWebtransportHandler(proxyConnection *handlers.ClientMessageHandler, params WebtransportSpanreedClientParams) (*webtransportSpanreedClient, error) {
@@ -45,7 +48,10 @@ func CreateWebtransportHandler(proxyConnection *handlers.ClientMessageHandler, p
 		logger = zap.Must(zap.NewDevelopment())
 	}
 
-	router, err := CreateClientConnectionRouter(proxyConnection, logger.With(zap.String("transport", "WebTransport")))
+	router, err := CreateClientConnectionRouter(proxyConnection, ClientConnectionRouterParams{
+		IncomingMessageQueueLength: params.IncomingMessageQueueLength,
+		OutgoingMessageQueueLength: params.OutgoingMessageQueueLength,
+	}, logger.With(zap.String("transport", "WebTransport")))
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +76,7 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 		return
 	}
 
-	// TODO (sessamekesh): How to close?
-	defer session.CloseWithError(1, "Regular closing?")
+	defer session.CloseWithError(0, "Proxy requested connection close")
 
 	routeContext, routeCancel := context.WithCancel(ctx)
 	defer routeCancel()
@@ -159,9 +164,10 @@ func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
 
 	wt.s = &webtransport.Server{
 		H3: http3.Server{
-			Addr:      wt.params.ListenAddress,
-			TLSConfig: tlsConfig,
-			Handler:   mux,
+			Addr:            wt.params.ListenAddress,
+			TLSConfig:       tlsConfig,
+			Handler:         mux,
+			EnableDatagrams: true,
 		},
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")

@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/proxy"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/transport"
@@ -29,6 +31,9 @@ func main() {
 	useWebsockets := flag.Bool("websockets", true, "Set to false to disable WebSocket support")
 	wsPort := flag.Int("ws-port", 3000, "Port on which the WebSocket server should run")
 	wsEndpoint := flag.String("ws-endpoint", "/ws", "HTTP endpoint that listens for WebSocket connections")
+	wsReadBufferSize := flag.Uint("ws-read-buffer-size", 0, "WebSocket read buffer size")
+	wsWriteBufferSize := flag.Uint("ws-write-buffer-size", 0, "WebSocket write buffer size")
+	wsHandshakeTimeoutMs := flag.Uint("ws-handshake-timeout", 0, "WebSocket handshake timeout, in milliseconds")
 
 	useWebtransport := flag.Bool("webtransport", false, "Set true to enable WebTransport support. Requires cert and key to be set.")
 	wtPort := flag.Int("wt-port", 3001, "Port on which WebTransport server should run")
@@ -37,6 +42,9 @@ func main() {
 	allowAllhosts := flag.Bool("allow-all-hosts", false, "Set true to accept connections from all hosts (except forbidden hosts)")
 	forbiddenHosts := flag.String("deny-hosts", "", "Comma-separated list of forbidden hosts")
 	allowedHosts := flag.String("allow-hosts", "", "Comma-separated list of allowed hosts (if allow-all-hosts is false)")
+
+	clientIncomingMessageQueueLength := flag.Uint("client-incoming-queue", 0, "Set size of incoming client message queue")
+	clientOutgoingMessageQueueLength := flag.Uint("client-outgoing-queue", 0, "Set size of outgoing client message queue")
 
 	useUdp := flag.Bool("udp", true, "Set to false to disable UDP support")
 	udpPort := flag.Int("udp-port", 30321, "Port on which the UDP server operates")
@@ -55,13 +63,12 @@ func main() {
 		Logger: logger,
 	})
 	magicNumber, version := proxy.GetMagicNumberAndVersion()
-	shutdownCtx, shutdownRelease := context.WithCancel(context.Background())
+	shutdownCtx, shutdownRelease := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL)
 	defer shutdownRelease()
 
 	wg := sync.WaitGroup{}
 
 	if *useWebsockets {
-		// TODO (sessamekesh): TLS here
 		wsHandler, wsHandlerErr := proxy.CreateClientMessageHandler("WebSocket")
 		if wsHandlerErr != nil {
 			logger.Error("Failed to create WebSocket client message handler", zap.Error(wsHandlerErr))
@@ -77,6 +84,13 @@ func main() {
 			DenylistedHosts:  strings.Split(*forbiddenHosts, ","),
 			CertPath:         *certPath,
 			KeyPath:          *keyPath,
+
+			IncomingMessageQueueLength: uint32(*clientIncomingMessageQueueLength),
+			OutgoingMessageQueueLength: uint32(*clientOutgoingMessageQueueLength),
+
+			IncomingMessageReadLimit:     uint32(*wsReadBufferSize),
+			OutgoingMessageWriteLimit:    uint32(*wsWriteBufferSize),
+			HandshakeTimeoutMilliseconds: uint32(*wsHandshakeTimeoutMs),
 		})
 		if wsServerErr != nil {
 			logger.Error("Failed to create WebSocket server", zap.Error(wsServerErr))
@@ -106,6 +120,9 @@ func main() {
 			AllowAllHosts:    *allowAllhosts,
 			AllowlistedHosts: strings.Split(*allowedHosts, ","),
 			DenylistedHosts:  strings.Split(*forbiddenHosts, ","),
+
+			IncomingMessageQueueLength: uint32(*clientIncomingMessageQueueLength),
+			OutgoingMessageQueueLength: uint32(*clientOutgoingMessageQueueLength),
 		})
 		if wtServerErr != nil {
 			logger.Error("Failed to create WebTransport server", zap.Error(wtServerErr))
@@ -145,8 +162,6 @@ func main() {
 			udpServer.Start(shutdownCtx)
 		}()
 	}
-
-	// TODO (sessamekesh): Add shutdownRelease to SIGTERM handler
 
 	wg.Add(1)
 	go func() {

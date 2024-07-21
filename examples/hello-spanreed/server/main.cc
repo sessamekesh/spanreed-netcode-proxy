@@ -294,9 +294,6 @@ int main() {
     flatbuffers::FlatBufferBuilder app_data_builder{};
     std::vector<HelloSpanreed::Dot> msg_dots;
     for (const auto& logical_dot : world_state.dots) {
-      // TODO (sessamekesh): Assign color on connect, round-robin starting at
-      //  random color (or instead of random, based on first connected client
-      //  name?)
       msg_dots.push_back(HelloSpanreed::Dot(
           logical_dot.x, logical_dot.y, logical_dot.radius, logical_dot.color));
     }
@@ -360,7 +357,6 @@ void handle_recv_message(SOCKTYPE sock, char* msg, int msglen,
   if (!SpanreedMessage::VerifyProxyDestinationMessageBuffer(v)) {
     std::cerr << "Invalid message received from client at "
               << get_address_string(src) << std::endl;
-    // TODO (sessamekesh): Error state
     return;
   }
 

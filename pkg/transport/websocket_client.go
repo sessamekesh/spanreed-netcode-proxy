@@ -34,12 +34,18 @@ type WebsocketSpanreedClientParams struct {
 	AllowlistedHosts []string
 	DenylistedHosts  []string
 
-	MaxReadMessageSize int64
-
 	CertPath string
 	KeyPath  string
 
 	Logger *zap.Logger
+
+	IncomingMessageQueueLength uint32
+	OutgoingMessageQueueLength uint32
+
+	IncomingMessageReadLimit  uint32
+	OutgoingMessageWriteLimit uint32
+
+	HandshakeTimeoutMilliseconds uint32
 }
 
 type NonBinaryMessage struct{}
@@ -49,13 +55,25 @@ func (m *NonBinaryMessage) Error() string {
 }
 
 func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, params WebsocketSpanreedClientParams) (*websocketSpanreedClient, error) {
-	// TODO (sessamekesh): Validation that necessary parameters exist, if any.
 	logger := params.Logger
 	if logger == nil {
 		logger = zap.Must(zap.NewDevelopment())
 	}
 
-	router, err := CreateClientConnectionRouter(proxyConnection, logger.With(zap.String("transport", "WebSocket")))
+	if params.IncomingMessageReadLimit == 0 {
+		params.IncomingMessageReadLimit = 10240 // 10 KB
+	}
+	if params.OutgoingMessageWriteLimit == 0 {
+		params.OutgoingMessageWriteLimit = 10240 // 10 KB
+	}
+	if params.HandshakeTimeoutMilliseconds == 0 {
+		params.HandshakeTimeoutMilliseconds = 1500 // 1.5 seconds to establish handshake
+	}
+
+	router, err := CreateClientConnectionRouter(proxyConnection, ClientConnectionRouterParams{
+		IncomingMessageQueueLength: params.IncomingMessageQueueLength,
+		OutgoingMessageQueueLength: params.OutgoingMessageQueueLength,
+	}, logger.With(zap.String("transport", "WebSocket")))
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +92,9 @@ func CreateWebsocketHandler(proxyConnection *handlers.ClientMessageHandler, para
 
 				return utils.Contains(origin, params.AllowlistedHosts)
 			},
-			// TODO (sessamekesh): read/write buffer size params
+			ReadBufferSize:   int(params.IncomingMessageQueueLength),
+			WriteBufferSize:  int(params.OutgoingMessageQueueLength),
+			HandshakeTimeout: time.Duration(params.HandshakeTimeoutMilliseconds) * time.Millisecond,
 		},
 		params:          params,
 		proxyConnection: proxyConnection,

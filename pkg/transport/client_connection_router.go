@@ -21,11 +21,17 @@ type clientConnectionChannels struct {
 	TransportOutgoingData chan<- []byte
 }
 
+type ClientConnectionRouterParams struct {
+	IncomingMessageQueueLength uint32
+	OutgoingMessageQueueLength uint32
+}
+
 type clientConnectionRouter struct {
 	proxyConnection *handlers.ClientMessageHandler
 
 	mut_connections sync.RWMutex
 	connections     map[uint32]*clientConnectionChannels
+	params          ClientConnectionRouterParams
 
 	log *zap.Logger
 }
@@ -39,10 +45,17 @@ type SingleClientTransportChannels struct {
 	ProxyInitiatedClose  <-chan bool
 }
 
-func CreateClientConnectionRouter(proxyConnection *handlers.ClientMessageHandler, logger *zap.Logger) (*clientConnectionRouter, error) {
+func CreateClientConnectionRouter(proxyConnection *handlers.ClientMessageHandler, params ClientConnectionRouterParams, logger *zap.Logger) (*clientConnectionRouter, error) {
 	log := logger
 	if log == nil {
 		log = zap.Must(zap.NewDevelopment())
+	}
+
+	if params.IncomingMessageQueueLength == 0 {
+		params.IncomingMessageQueueLength = 16
+	}
+	if params.OutgoingMessageQueueLength == 0 {
+		params.OutgoingMessageQueueLength = 16
 	}
 
 	return &clientConnectionRouter{
@@ -62,6 +75,7 @@ func safeParseConnectClientMessage(payload []byte) (msg *SpanreedMessage.Connect
 	}()
 
 	// TODO (sessamekesh): Better validation, it's possible to get something invalid still
+	// TODO (sessamekesh): Just... replace the message formats with custom ones, flatbuffers aren't really needed here.
 
 	o := SpanreedMessage.GetRootAsConnectClientMessage(payload, 0)
 	o.ConnectionString()
@@ -105,8 +119,7 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 
 	log.Info("New client connection")
 
-	// TODO (sessamekesh): Buffer these channels based on config!
-	outgoingMessages := make(chan handlers.ClientMessage, 16)
+	outgoingMessages := make(chan handlers.ClientMessage, r.params.OutgoingMessageQueueLength)
 	closeRequest := make(chan handlers.ClientCloseCommand, 1)
 	verdict := make(chan handlers.OpenClientConnectionVerdict, 1)
 
@@ -136,9 +149,8 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 		return nil, err
 	}
 
-	// TODO (sessamekesh): Config based size for these!
-	outgoingPackets := make(chan []byte, 16)
-	incomingPackets := make(chan []byte, 16)
+	outgoingPackets := make(chan []byte, r.params.OutgoingMessageQueueLength)
+	incomingPackets := make(chan []byte, r.params.IncomingMessageQueueLength)
 	clientCloseChannel := make(chan bool, 1)
 	proxyCloseChannel := make(chan bool, 1)
 
