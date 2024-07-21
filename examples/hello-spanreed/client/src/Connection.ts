@@ -128,7 +128,19 @@ export async function connectWebtransport(
     requireUnreliable: true,
   });
 
-  await wt.ready;
+  await Promise.race([
+    wt.ready,
+    wt.closed.catch((e) => {
+      let errMsg = '<UNKNOWN ERROR>';
+      if (e instanceof Error) {
+        errMsg = e.message;
+      } else if (typeof e === 'string') {
+        errMsg = e;
+      }
+      logCb(`WebTransport unexpectedly closed! ${e}`, LogLevel.Error);
+      throw e;
+    }),
+  ]);
 
   const reader = wt.datagrams.readable.getReader();
   const writer = wt.datagrams.writable.getWriter();

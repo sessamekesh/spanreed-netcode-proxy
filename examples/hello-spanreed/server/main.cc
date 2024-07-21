@@ -3,7 +3,16 @@
 #include <spanreed_messages/proxy_destination_message_generated.h>
 // ...
 
+#ifdef _WIN32
+#include <WS2tcpip.h>
 #include <WinSock2.h>
+#else
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
 #include <concurrentqueue.h>
 #include <messages/client_message_generated.h>
 #include <messages/server_message_generated.h>
@@ -14,6 +23,29 @@
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+
+static std::string get_address_string(sockaddr_in addr) {
+  std::string ip;
+  ip.resize(32);
+  inet_ntop(AF_INET, &addr.sin_addr, &ip[0], ip.length());
+  return ip + ":" + std::to_string(addr.sin_port);
+}
+
+#ifdef _WIN32
+#define SOCKTYPE SOCKET
+static std::string get_last_socket_error() {
+  std::string errmsg;
+  errmsg.resize(256);
+  FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, WSAGetLastError(),
+                LANG_SYSTEM_DEFAULT, &errmsg[0], errmsg.length(), NULL);
+  return errmsg;
+}
+#define ISSOCKERR(x) (x) == INVALID_SOCKET
+#else
+#define SOCKTYPE int
+#define ISSOCKERR(x) (x) < 0
+static std::string get_last_socket_error() { return strerror(errno); }
+#endif
 
 struct ConnectedClient {
   sockaddr_in spanreed_client_addr{};  // Will probably be the same for all
@@ -40,7 +72,7 @@ std::unordered_map<std::uint32_t, ConnectedClient> gConnectedClients{};
 
 moodycamel::ConcurrentQueue<QueuedClientMessage> gClientMessageQueue;
 
-long long (*gGetTimestamp)() = nullptr;
+std::function<long long()> gGetTimestamp = nullptr;
 std::chrono::high_resolution_clock::time_point gTpStart;
 
 struct DrawnDot {
@@ -55,14 +87,14 @@ struct WorldState {
   std::vector<DrawnDot> dots;
 };
 
-void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src);
+void handle_recv_message(SOCKTYPE sock, char* msg, int msglen, sockaddr_in src);
 void connection_request(
-    SOCKET sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
+    SOCKTYPE sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
     const std::uint8_t* app_data, size_t app_data_len, sockaddr_in src);
 void close_connection_request(
-    SOCKET sock, const SpanreedMessage::ProxyDestCloseConnection* request,
+    SOCKTYPE sock, const SpanreedMessage::ProxyDestCloseConnection* request,
     sockaddr_in src);
-void handle_client_message(SOCKET sock,
+void handle_client_message(SOCKTYPE sock,
                            const SpanreedMessage::ProxyDestClientMessage* msg,
                            const std::uint8_t* app_data_bytes,
                            size_t app_data_len, sockaddr_in src);
@@ -87,8 +119,10 @@ static HelloSpanreed::Color get_client_color() {
 }
 
 static bool cmp_addr(const sockaddr_in& a, const sockaddr_in& b) {
-  if (a.sin_addr.S_un.S_addr != b.sin_addr.S_un.S_addr) return false;
   if (a.sin_port != b.sin_port) return false;
+  if (a.sin_family != b.sin_family) return false;
+
+  if (memcmp(&a.sin_addr, &b.sin_addr, sizeof(a.sin_addr)) != 0) return false;
 
   return true;
 }
@@ -106,16 +140,18 @@ int main() {
         .count();
   };
 
+#ifdef _WIN32
   WSADATA wsa{};
   if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-    std::cerr << "Failed to startup WinSock - error code " << WSAGetLastError()
+    std::cerr << "Failed to startup WinSock: " << get_last_socket_error()
               << std::endl;
     return -1;
   }
+#endif
 
-  SOCKET server_socket{};
-  if ((server_socket = socket(AF_INET, SOCK_DGRAM, 0)) == INVALID_SOCKET) {
-    std::cerr << "Could not create server socket: " << WSAGetLastError()
+  SOCKTYPE server_socket{};
+  if (ISSOCKERR(server_socket = socket(AF_INET, SOCK_DGRAM, 0))) {
+    std::cerr << "Could not create server socket: " << get_last_socket_error()
               << std::endl;
     return -1;
   }
@@ -125,9 +161,9 @@ int main() {
   server_addr.sin_addr.s_addr = INADDR_ANY;
   server_addr.sin_port = htons(30001);
 
-  if (bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr)) ==
-      SOCKET_ERROR) {
-    std::cerr << "Failed to bind socket, code: " << WSAGetLastError()
+  if (ISSOCKERR(
+          bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr)))) {
+    std::cerr << "Failed to bind socket: " << get_last_socket_error()
               << std::endl;
     return -1;
   }
@@ -141,22 +177,23 @@ int main() {
       char message[BUFLEN] = {};
 
       int message_len;
-      int slen = sizeof(sockaddr_in);
+      socklen_t slen = sizeof(sockaddr_in);
       sockaddr_in recv_addr{};
-      if ((message_len = recvfrom(server_socket, message, BUFLEN, 0x0,
-                                  (sockaddr*)&recv_addr, &slen)) ==
-          SOCKET_ERROR) {
-        std::cout << "recvfrom() failed with error code: " << WSAGetLastError()
+      if (ISSOCKERR(message_len =
+                        recvfrom(server_socket, message, BUFLEN, 0x0,
+                                 (struct sockaddr*)&recv_addr, &slen))) {
+        std::cout << "recvfrom() failed with error: " << get_last_socket_error()
                   << std::endl;
-        return -1;
+        return;
       }
 
       std::cout << "Received packet (" << message_len << " bytes) from "
-                << inet_ntoa(recv_addr.sin_addr) << " "
-                << ntohs(recv_addr.sin_port) << std::endl;
+                << get_address_string(recv_addr) << std::endl;
 
       handle_recv_message(server_socket, message, message_len, recv_addr);
     }
+
+    return;
   });
 
   QueuedClientMessage msg{};
@@ -313,7 +350,8 @@ int main() {
   return 0;
 }
 
-void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
+void handle_recv_message(SOCKTYPE sock, char* msg, int msglen,
+                         sockaddr_in src) {
   flatbuffers::Verifier::Options opts{};
   opts.check_alignment = true;
   opts.check_nested_flatbuffers = true;
@@ -321,8 +359,7 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
   flatbuffers::Verifier v(reinterpret_cast<std::uint8_t*>(msg), msglen, opts);
   if (!SpanreedMessage::VerifyProxyDestinationMessageBuffer(v)) {
     std::cerr << "Invalid message received from client at "
-              << inet_ntoa(src.sin_addr) << " port " << src.sin_port
-              << std::endl;
+              << get_address_string(src) << std::endl;
     // TODO (sessamekesh): Error state
     return;
   }
@@ -334,7 +371,7 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
       auto* req =
           proxy_destination_msg->inner_message_as_ProxyDestConnectionRequest();
       connection_request(sock, req, proxy_destination_msg->app_data()->data(),
-                         proxy_destination_msg->app_data()->Length(), src);
+                         proxy_destination_msg->app_data()->size(), src);
       return;
     }
     case SpanreedMessage::ProxyDestInnerMsg_ProxyDestCloseConnection: {
@@ -348,7 +385,7 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
           proxy_destination_msg->inner_message_as_ProxyDestClientMessage();
       handle_client_message(sock, req,
                             proxy_destination_msg->app_data()->data(),
-                            proxy_destination_msg->app_data()->Length(), src);
+                            proxy_destination_msg->app_data()->size(), src);
       return;
     }
     default:
@@ -357,7 +394,7 @@ void handle_recv_message(SOCKET sock, char* msg, int msglen, sockaddr_in src) {
 }
 
 void connection_request(
-    SOCKET sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
+    SOCKTYPE sock, const SpanreedMessage::ProxyDestConnectionRequest* request,
     const std::uint8_t* app_data, size_t app_data_len, sockaddr_in src) {
   flatbuffers::Verifier::Options opts{};
   opts.check_alignment = true;
@@ -443,13 +480,13 @@ void connection_request(
 }
 
 void close_connection_request(
-    SOCKET sock, const SpanreedMessage::ProxyDestCloseConnection* request,
+    SOCKTYPE sock, const SpanreedMessage::ProxyDestCloseConnection* request,
     sockaddr_in src) {
   ConnectedClient client{};
 
   std::cout << "Received close connection request for "
-            << inet_ntoa(src.sin_addr) << " at port " << src.sin_port
-            << ", for client " << request->client_id() << std::endl;
+            << get_address_string(src) << ", for client "
+            << request->client_id() << std::endl;
 
   {
     std::shared_lock l(gMutConnectedClients);
@@ -468,7 +505,7 @@ void close_connection_request(
   gConnectedClients.erase(request->client_id());
 }
 
-void handle_client_message(SOCKET sock,
+void handle_client_message(SOCKTYPE sock,
                            const SpanreedMessage::ProxyDestClientMessage* msg,
                            const std::uint8_t* app_data_bytes,
                            size_t app_data_len, sockaddr_in src) {
