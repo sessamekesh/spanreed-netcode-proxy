@@ -31,4 +31,3 @@ if (WIN32)
 endif ()
 
 target_include_directories(hello-spanreed-server PRIVATE include)
-target_include_directories(hello-spanreed-server PRIVATE ../../../flatbuffers/generated/cc/include)
