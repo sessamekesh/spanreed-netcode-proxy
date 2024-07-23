@@ -310,9 +310,9 @@ func (r *clientConnectionRouter) Start(ctx context.Context) error {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		r.log.Info("Starting ClientConnectionRouter proxy listener")
 		defer r.log.Info("Shutting down CilentConnectionRouter proxy listener")
-		defer wg.Done()
 
 		for {
 			select {
@@ -329,8 +329,6 @@ func (r *clientConnectionRouter) Start(ctx context.Context) error {
 	}()
 
 	wg.Wait()
-
-	// TODO (sessamekesh): Clean up connections here, graceful shutdown
 
 	r.log.Info("All ClientConnectionRouter goroutines finished. Exiting gracefully")
 	return nil
@@ -367,8 +365,6 @@ func (r *clientConnectionRouter) handleOutgoingMessageRequest(msgRequest handler
 func (r *clientConnectionRouter) handleIncomingVerdict(verdictMsg handlers.OpenClientConnectionVerdict) {
 	r.mut_connections.RLock()
 	defer r.mut_connections.RUnlock()
-
-	r.log.Info("Received incoming verdict", zap.Uint32("clientId", verdictMsg.ClientId), zap.Bool("verdict", verdictMsg.Verdict))
 
 	route, has := r.connections[verdictMsg.ClientId]
 	if !has {

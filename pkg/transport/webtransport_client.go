@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// TODO (sessamekesh): Is there a way to configure UDP ranges?
+
 type webtransportSpanreedClient struct {
 	proxyConnection        *handlers.ClientMessageHandler
 	clientConnectionRouter *clientConnectionRouter
@@ -95,9 +97,9 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Info("Starting WebTransport proxy listener goroutine")
 		defer log.Info("Stopped WebSocket proxy listener goroutine")
-		defer wg.Done()
 
 		for {
 			select {
@@ -186,9 +188,10 @@ func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		wt.log.Info("Starting WebTransport HTTP3 server!", zap.String("path", wt.params.ListenAddress))
 		defer wt.log.Info("Shutdown WebTransport HTTP3 server")
-		defer wg.Done()
 
 		if err := wt.s.ListenAndServeTLS(wt.params.CertPath, wt.params.KeyPath); err != nil {
 			wt.log.Error("Unexpected WebTransport server close!", zap.Error(err))
@@ -201,6 +204,17 @@ func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
 
 		if err := wt.clientConnectionRouter.Start(ctx); err != nil {
 			wt.log.Error("Error on ClientConnectionRouter run", zap.Error(err))
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-ctx.Done()
+
+		if closeErr := wt.s.Close(); closeErr != nil {
+			wt.log.Error("Error shutting down WebTransport HTTP3 server", zap.Error(closeErr))
 		}
 	}()
 

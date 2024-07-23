@@ -559,6 +559,7 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.OpenCl
 					return &MissingDestinationHandler{Name: destinationHandler.Name}
 				}
 
+				p.log.Info("Attaching destination handler to client", zap.Uint32("clientId", incomingMsg.ClientId), zap.String("destHandler", destinationHandler.Name))
 				sdhErr := p.clientStore.SetDestinationHandlerName(incomingMsg.ClientId, destinationHandler.Name)
 				if sdhErr != nil {
 					p.log.Error("Error setting client destination handler name", zap.Uint32("clientId", incomingMsg.ClientId), zap.Error(sdhErr))

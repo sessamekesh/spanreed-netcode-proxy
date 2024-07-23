@@ -18,6 +18,11 @@ interface ConsoleProps {
   lines: Array<{ msg: string; logLevel: LogLevel }>;
 }
 export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    ref.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [lines]);
+
   return (
     <div
       style={{
@@ -72,6 +77,7 @@ export const Console: React.FC<ConsoleProps> = React.memo(({ lines }) => {
           </span>
         );
       })}
+      <div ref={ref} />
     </div>
   );
 });

@@ -16,6 +16,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// TODO (sessamekesh): Allow configuring UDP ranges for client connections
+
 type udpSpanreedDestinationChannels struct {
 	Address *net.UDPAddr
 }
@@ -31,7 +33,7 @@ type udpSpanreedDestination struct {
 	log       *zap.Logger
 	stringGen *utils.RandomStringGenerator
 
-	resolveUdpAddr  func(connStr string) (*net.UDPAddr, error)
+	resolveUdpHost  func(connStr string) (string, error)
 	proxyConnection *handlers.DestinationMessageHandler
 
 	mut_destinationConnections sync.RWMutex
@@ -55,7 +57,7 @@ type UdpSpanreedDestinationParams struct {
 
 	Logger *zap.Logger
 
-	ResolveUdpAddress func(connStr string) (*net.UDPAddr, error)
+	ResolveUdpHost func(connStr string) (string, error)
 }
 
 func safeParseDestinationMessage(payload []byte) (msg *SpanreedMessage.DestinationMessage, err error) {
@@ -69,16 +71,28 @@ func safeParseDestinationMessage(payload []byte) (msg *SpanreedMessage.Destinati
 	return SpanreedMessage.GetRootAsDestinationMessage(payload, 0), nil
 }
 
+func isDestinationAllowed(allowAll bool, allowlist, denylist []string, destination string) bool {
+	if utils.Contains(destination, denylist) {
+		return false
+	}
+
+	if allowAll {
+		return true
+	}
+
+	return utils.Contains(destination, allowlist)
+}
+
 func DefaultUdpDestinationHandlerMatchConnectionStringFn(connStr string) bool {
 	return connStr[0:4] == "udp:"
 }
 
-func defaultAddressResolution(connStr string) (*net.UDPAddr, error) {
+func defaultHostResolution(connStr string) (string, error) {
 	if connStr[0:4] != "udp:" {
-		return nil, goerrs.New("not a UDP connection string")
+		return "", goerrs.New("not a UDP connection string")
 	}
 
-	return net.ResolveUDPAddr("udp", connStr[4:])
+	return connStr[4:], nil
 }
 
 func CreateUdpDestinationHandler(proxyConnection *handlers.DestinationMessageHandler, params UdpSpanreedDestinationParams) (*udpSpanreedDestination, error) {
@@ -86,16 +100,16 @@ func CreateUdpDestinationHandler(proxyConnection *handlers.DestinationMessageHan
 	if logger == nil {
 		logger = zap.Must(zap.NewDevelopment())
 	}
-	resolveUdpAddrFunc := params.ResolveUdpAddress
+	resolveUdpAddrFunc := params.ResolveUdpHost
 	if resolveUdpAddrFunc == nil {
-		resolveUdpAddrFunc = defaultAddressResolution
+		resolveUdpAddrFunc = defaultHostResolution
 	}
 
 	return &udpSpanreedDestination{
 		params:          params,
 		log:             logger.With(zap.String("handler", "udpDestination")),
 		stringGen:       utils.CreateRandomstringGenerator(time.Now().UnixMicro()),
-		resolveUdpAddr:  resolveUdpAddrFunc,
+		resolveUdpHost:  resolveUdpAddrFunc,
 		proxyConnection: proxyConnection,
 
 		mut_destinationConnections: sync.RWMutex{},
@@ -124,8 +138,8 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	}
 
 	// TODO (sessamekesh): Configure connection correctly!
-	conn.SetReadBuffer(2048)
-	conn.SetWriteBuffer(2048)
+	conn.SetReadBuffer(4096)
+	conn.SetWriteBuffer(4096)
 
 	//
 	// Connection closing goroutine
@@ -133,6 +147,28 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		<-ctx.Done()
+
+		s.log.Info("UDP destination closing, sending close request to all connected clients...")
+		defer s.log.Info("Successfully sent close requests to all connected clients.")
+		s.mut_destinationConnections.Lock()
+		defer s.mut_destinationConnections.Unlock()
+		for clientId, connData := range s.destinationConnections {
+			b := flatbuffers.NewBuilder(64)
+			SpanreedMessage.ProxyDestCloseConnectionStart(b)
+			SpanreedMessage.ProxyDestCloseConnectionAddClientId(b, clientId)
+			inner_msg := SpanreedMessage.ProxyDestCloseConnectionEnd(b)
+
+			SpanreedMessage.ProxyDestinationMessageStart(b)
+			SpanreedMessage.ProxyDestinationMessageAddInnerMessageType(b, SpanreedMessage.ProxyDestInnerMsgProxyDestCloseConnection)
+			SpanreedMessage.ProxyDestinationMessageAddInnerMessage(b, inner_msg)
+			cmsg := SpanreedMessage.ProxyDestinationMessageEnd(b)
+			b.Finish(cmsg)
+			buf := b.FinishedBytes()
+
+			conn.WriteToUDP(buf, connData.Address)
+			delete(s.destinationConnections, clientId)
+		}
+
 		conn.Close()
 	}()
 
@@ -208,6 +244,12 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 				err := s.onConnectClient(openConnectionRequest)
 				if err != nil {
 					s.log.Warn("Could not open destination connection for client", zap.Uint32("clientId", openConnectionRequest.ClientId), zap.Error(err))
+					s.proxyConnection.OpenClientVerdictChannel <- handlers.OpenClientConnectionVerdict{
+						ClientId: openConnectionRequest.ClientId,
+						Verdict:  false,
+						AppData:  nil,
+						Error:    err,
+					}
 				}
 			case closeRequest := <-s.proxyConnection.ProxyCloseRequests:
 				s.log.Info("Handle close request", zap.Uint32("clientId", closeRequest.ClientId))
@@ -241,9 +283,20 @@ func (s *udpSpanreedDestination) Start(ctx context.Context) error {
 
 func (s *udpSpanreedDestination) onConnectClient(outgoingMsg handlers.OpenClientConnectionCommand) error {
 	log := s.log.With(zap.Uint32("clientId", outgoingMsg.ClientId))
-	udpAddr, udpAddrErr := s.resolveUdpAddr(outgoingMsg.ConnectionString)
+	udpHost, udpHostErr := s.resolveUdpHost(outgoingMsg.ConnectionString)
+	if udpHostErr != nil {
+		log.Error("Cannot resolve UDP host from connection string", zap.String("udpHost", outgoingMsg.ConnectionString), zap.Error(udpHostErr))
+		return udpHostErr
+	}
+
+	if !isDestinationAllowed(s.params.AllowAllDestinations, s.params.AllowlistedDestinations, s.params.DenylistedDestinations, udpHost) {
+		log.Error("Attempted connection to disallowed destination, not allowing!")
+		return goerrs.New("cannot connect to denied destination")
+	}
+
+	udpAddr, udpAddrErr := net.ResolveUDPAddr("udp", udpHost)
 	if udpAddrErr != nil {
-		log.Error("Cannot resolve UDP address from connection string", zap.String("udpAddr", outgoingMsg.ConnectionString), zap.Error(udpAddrErr))
+		log.Error("Cannot resolve UDP address from connection string", zap.String("udpHost", udpHost), zap.Error(udpAddrErr))
 		return udpAddrErr
 	}
 
