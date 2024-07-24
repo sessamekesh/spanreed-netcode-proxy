@@ -652,6 +652,9 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 		p.log.Warn("Destination handler missing", zap.Uint32("clientId", clientId), zap.Error(clientHandlerNameError))
 	}
 
+	// TODO (sessamekesh): Depending on the workflow, a client may have this called multiple times.
+	//  That should be allowable (i.e. not raise errors) but it also shouldn't happen during normal
+	//  cases like destination timeout, client disconnect, etc.
 	p.sendClientDisconnect(clientId, clientHandlerName, reason)
 	p.sendDestinationDisconnect(clientId, destinationHandlerName, reason)
 	p.clientStore.RemoveClient(clientId)
