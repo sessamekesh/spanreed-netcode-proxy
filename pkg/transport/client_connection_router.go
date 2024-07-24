@@ -63,6 +63,7 @@ func CreateClientConnectionRouter(proxyConnection *handlers.ClientMessageHandler
 		mut_connections: sync.RWMutex{},
 		connections:     make(map[uint32]*clientConnectionChannels),
 		log:             log.With(zap.String("handlerBase", "ClientConnectionRouter")),
+		params:          params,
 	}, nil
 }
 
@@ -117,7 +118,7 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 
 	log := r.log.With(zap.Uint32("clientId", clientId))
 
-	log.Info("New client connection")
+	log.Info("New client connection", zap.Uint32("OutgoingMessageQueueLength", r.params.OutgoingMessageQueueLength))
 
 	outgoingMessages := make(chan handlers.ClientMessage, r.params.OutgoingMessageQueueLength)
 	closeRequest := make(chan handlers.ClientCloseCommand, 1)
@@ -159,7 +160,6 @@ func (r *clientConnectionRouter) OpenConnection(ctx context.Context) (*SingleCli
 	go func() {
 		//
 		// Expect to receive an auth message and forward it...
-		log.Info("Awaiting auth request...")
 		select {
 		case <-ctx.Done():
 			log.Info("Cancelling auth request wait because of shutdown request")

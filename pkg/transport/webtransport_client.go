@@ -70,6 +70,7 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 	log := wt.log.With(zap.String("wtConnId", wt.stringGen.GetRandomString(6)))
 
 	log.Info("New WebTransport request")
+	defer log.Info("WebTransport request terminated")
 
 	session, sessionError := wt.s.Upgrade(w, r)
 	if sessionError != nil {
@@ -97,14 +98,16 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
+		// TODO (sessamekesh): For some reason, this isn't called on server shutdown, causing dangling
+		//  WebTransport connections that take a while to properly disconnect in the browser
+
 		defer wg.Done()
 		log.Info("Starting WebTransport proxy listener goroutine")
-		defer log.Info("Stopped WebSocket proxy listener goroutine")
+		defer log.Info("Stopped WebTransport proxy listener goroutine")
 
 		for {
 			select {
 			case <-session.Context().Done():
-				routeCancel()
 			case <-routeContext.Done():
 			case <-clientRouter.ProxyInitiatedClose:
 				log.Info("Proxy listener attempting graceful shutdown")
@@ -115,6 +118,7 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 				writeErr := session.SendDatagram(logicalMessage)
 				if writeErr != nil {
 					if cerr := session.Context().Err(); cerr != nil {
+						log.Error("Failed to write outgoing message, aborting connection!", zap.Error(cerr))
 						routeCancel()
 						return
 					} else {
@@ -127,9 +131,10 @@ func (wt *webtransportSpanreedClient) onWtRequest(ctx context.Context, w http.Re
 
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		log.Info("Starting WebTransport connection listener goroutine")
 		defer log.Info("Stopped WebTransport connection listener goroutine")
-		defer wg.Done()
 		defer func() { clientRouter.ClientInitiatedClose <- true }()
 		defer routeCancel()
 
@@ -216,6 +221,8 @@ func (wt *webtransportSpanreedClient) Start(ctx context.Context) error {
 		if closeErr := wt.s.Close(); closeErr != nil {
 			wt.log.Error("Error shutting down WebTransport HTTP3 server", zap.Error(closeErr))
 		}
+
+		wt.log.Info("HTTP3 server shutdown finished gracefully")
 	}()
 
 	wg.Wait()

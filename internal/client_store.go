@@ -56,13 +56,18 @@ func CreateClientStore(maxConnections int) *ClientStore {
 	}
 }
 
-func (store *ClientStore) ForAllClients(cb func(clientId uint32)) {
+func (store *ClientStore) KickAllClients(cb func(clientId uint32, meta *ClientConnectionMetadata) error) error {
 	store.mut_clientConnections.Lock()
 	defer store.mut_clientConnections.Unlock()
 
-	for clientId := range store.clientConnections {
-		cb(clientId)
+	for clientId, clientRecord := range store.clientConnections {
+		if err := cb(clientId, clientRecord); err != nil {
+			return err
+		}
+		delete(store.clientConnections, clientId)
 	}
+
+	return nil
 }
 
 func (store *ClientStore) GetNewClientId() uint32 {

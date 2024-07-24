@@ -139,9 +139,10 @@ func (ws *websocketSpanreedClient) onWsRequest(ctx context.Context, w http.Respo
 
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		log.Info("Starting WebSocket proxy listener goroutine")
 		defer log.Info("Stopped WebSocket proxy listener goroutine")
-		defer wg.Done()
 
 		for {
 			select {

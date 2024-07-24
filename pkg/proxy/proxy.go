@@ -342,8 +342,11 @@ func (p *proxy) Start(ctx context.Context) {
 	// Client message handling goroutine...
 	wg.Add(1)
 	go func() {
-		p.log.Info("Starting Spanreed goroutine for handling incoming client messages...")
 		defer wg.Done()
+
+		p.log.Info("Starting Spanreed goroutine for handling incoming client messages")
+		defer p.log.Info("Stopped Spanreed goroutine for handlign incoming client messages")
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -376,8 +379,10 @@ func (p *proxy) Start(ctx context.Context) {
 	// Server message handling goroutine...
 	wg.Add(1)
 	go func() {
-		p.log.Info("Starting Spanreed goroutine for handling incoming destination messages...")
 		defer wg.Done()
+		p.log.Info("Starting Spanreed goroutine for handling incoming destination messages")
+		defer p.log.Info("Stopped Spanreed goroutine for handling incoming destination messages")
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -408,9 +413,10 @@ func (p *proxy) Start(ctx context.Context) {
 	// Message timeouts (kick silent or ancient connections)
 	wg.Add(1)
 	go func() {
-		p.log.Info("Starting Spanreed goroutine for handling timeouts", zap.Duration("interval", p.connectionKickLoopTime))
 		defer wg.Done()
-		defer p.log.Info("Timeout goroutine exiting! Hopefully because this was closed!")
+
+		p.log.Info("Starting Spanreed goroutine for handling timeouts", zap.Duration("interval", p.connectionKickLoopTime))
+		defer p.log.Info("Stopped Spanreed goroutine for handling timeouts")
 
 		ticker := time.NewTicker(p.connectionKickLoopTime)
 		defer ticker.Stop()
@@ -435,8 +441,12 @@ func (p *proxy) Start(ctx context.Context) {
 
 	wg.Wait()
 
-	p.clientStore.ForAllClients(func(clientId uint32) {
-		p.kickClient(clientId, fmt.Errorf("proxy shutdown"))
+	dcErr := fmt.Errorf("disconnecting due to proxy shutdown request")
+	p.clientStore.KickAllClients(func(clientId uint32, meta *internal.ClientConnectionMetadata) error {
+		p.sendClientDisconnect(clientId, meta.ClientHandlerName, dcErr)
+		p.sendDestinationDisconnect(clientId, meta.DestinationHandlerName, dcErr)
+
+		return nil
 	})
 }
 
@@ -590,6 +600,46 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.OpenCl
 	return err
 }
 
+func (p *proxy) sendClientDisconnect(clientId uint32, clientHandlerName string, reason error) {
+	if clientHandlerName == "" {
+		return
+	}
+
+	p.mut_outgoingClientMessageChannels.Lock()
+	defer p.mut_outgoingClientMessageChannels.Unlock()
+
+	clientHandler, has := p.outgoingClientMessageChannels[clientHandlerName]
+	if !has {
+		p.log.Warn("No outgoing client message channels registered", zap.Uint32("clientId", clientId), zap.String("clientHandlerName", clientHandlerName))
+		return
+	}
+
+	clientHandler.closeRequests <- handlers.ClientCloseCommand{
+		ClientId: clientId,
+		Error:    reason,
+	}
+}
+
+func (p *proxy) sendDestinationDisconnect(clientId uint32, destinationHandlerName string, reason error) {
+	if destinationHandlerName == "" {
+		return
+	}
+
+	p.mut_outgoingDestinationMessageSendChannels.Lock()
+	defer p.mut_outgoingDestinationMessageSendChannels.Unlock()
+
+	destinationHandler, has := p.outgoingDestinationMessageSendChannels[destinationHandlerName]
+	if !has {
+		p.log.Warn("No outgoing destination message channels registered", zap.Uint32("clientId", clientId), zap.String("destinationHandlerName", destinationHandlerName))
+		return
+	}
+
+	destinationHandler.closeRequests <- handlers.ClientCloseCommand{
+		ClientId: clientId,
+		Error:    reason,
+	}
+}
+
 func (p *proxy) kickClient(clientId uint32, reason error) error {
 	p.log.Info("Kicking client", zap.Uint32("clientId", clientId), zap.Error(reason))
 	clientHandlerName, clientHandlerNameError := p.clientStore.GetClientHandlerName(clientId)
@@ -602,50 +652,8 @@ func (p *proxy) kickClient(clientId uint32, reason error) error {
 		p.log.Warn("Destination handler missing", zap.Uint32("clientId", clientId), zap.Error(clientHandlerNameError))
 	}
 
-	//
-	// Client disconnect notification:
-	func() {
-		if clientHandlerName == "" {
-			return
-		}
-
-		p.mut_outgoingClientMessageChannels.Lock()
-		defer p.mut_outgoingClientMessageChannels.Unlock()
-
-		clientHandler, has := p.outgoingClientMessageChannels[clientHandlerName]
-		if !has {
-			p.log.Warn("No outgoing client message channels registered", zap.Uint32("clientId", clientId), zap.String("clientHandlerName", clientHandlerName))
-			return
-		}
-
-		clientHandler.closeRequests <- handlers.ClientCloseCommand{
-			ClientId: clientId,
-			Error:    reason,
-		}
-	}()
-
-	//
-	// Destination disconnect notification:
-	func() {
-		if destinationHandlerName == "" {
-			return
-		}
-
-		p.mut_outgoingDestinationMessageSendChannels.Lock()
-		defer p.mut_outgoingDestinationMessageSendChannels.Unlock()
-
-		destinationHandler, has := p.outgoingDestinationMessageSendChannels[destinationHandlerName]
-		if !has {
-			p.log.Warn("No outgoing destination message channels registered", zap.Uint32("clientId", clientId), zap.String("destinationHandlerName", destinationHandlerName))
-			return
-		}
-
-		destinationHandler.closeRequests <- handlers.ClientCloseCommand{
-			ClientId: clientId,
-			Error:    reason,
-		}
-	}()
-
+	p.sendClientDisconnect(clientId, clientHandlerName, reason)
+	p.sendDestinationDisconnect(clientId, destinationHandlerName, reason)
 	p.clientStore.RemoveClient(clientId)
 
 	return nil
