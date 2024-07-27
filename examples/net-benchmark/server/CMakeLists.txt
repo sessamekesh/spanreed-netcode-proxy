@@ -14,7 +14,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(concurrentqueue)
 
-add_executable(net-benchmark-server main.cc "include/udp_socket.h" "include/proxy_messages.h" "include/destination_messages.h")
+set(net-benchmark-server-include
+  "include/net-benchmark-server/destination_messages.h"
+  "include/net-benchmark-server/littleendian.h"
+  "include/net-benchmark-server/proxy_messages.h"
+  "include/net-benchmark-server/udp_socket.h")
+
+set(net-benchmark-server-src
+  "src/littleendian.cc"
+  "src/proxy_messages.cc")
+
+add_executable(net-benchmark-server
+  ${net-benchmark-server-src}
+  ${net-benchmark-server-include}
+  main.cc)
+target_include_directories(net-benchmark-server PUBLIC include)
 set_property(TARGET net-benchmark-server PROPERTY CXX_STANDARD 20)
 target_link_libraries(net-benchmark-server PUBLIC concurrentqueue)
 

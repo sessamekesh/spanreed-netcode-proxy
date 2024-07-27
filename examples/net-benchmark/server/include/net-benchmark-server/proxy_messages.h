@@ -3,38 +3,42 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
 namespace spanreed::benchmark {
 
-// TODO (sessamekesh): Sequence IDs
-
-struct ConnectClientRequest {
+struct ProxyMessageHeader {
+  std::uint32_t magic_header;
   std::uint32_t client_id;
+  std::uint16_t message_id;
+  std::uint16_t ack_field;
+
+  static std::size_t HEADER_SIZE;
 };
 
-struct DisconnectClientRequest {
-  std::uint32_t client_id;
+enum class ProxyMessageType {
+  ConnectClient,
+  DisconnectClient,
+  Ping,
 };
 
 struct PingMessage {
-  std::uint32_t client_id;
   std::uint64_t client_send_ts;
   std::uint64_t proxy_recv_client_ts;
   std::uint64_t proxy_forward_client_ts;
   std::uint64_t server_recv_ts;
+  std::string payload;
 };
 
-struct HashPayloadMessage {
-  std::uint32_t client_id;
-  std::vector<std::uint8_t> buffer_to_hash;  // XOR
-  std::uint32_t return_buffer_size;
-};
+typedef std::variant<std::monostate, PingMessage> ProxyMessageBody;
 
-typedef std::variant<ConnectClientRequest, DisconnectClientRequest, PingMessage,
-                     HashPayloadMessage>
-    ProxyMessage;
+struct ProxyMessage {
+  ProxyMessageHeader header;
+  ProxyMessageType message_type;
+  ProxyMessageBody body;
+};
 
 std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,
                                                 std::size_t buffer_len);
