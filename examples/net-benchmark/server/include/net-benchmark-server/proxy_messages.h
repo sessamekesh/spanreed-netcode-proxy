@@ -13,12 +13,14 @@ struct ProxyMessageHeader {
   std::uint32_t magic_header;
   std::uint32_t client_id;
   std::uint16_t message_id;
-  std::uint16_t ack_field;
+  std::uint16_t last_seen_server_message_id;
+  std::uint32_t ack_field;
 
   static std::size_t HEADER_SIZE;
 };
 
 enum class ProxyMessageType {
+  UNKNOWN,
   ConnectClient,
   DisconnectClient,
   Ping,
@@ -35,9 +37,9 @@ struct PingMessage {
 typedef std::variant<std::monostate, PingMessage> ProxyMessageBody;
 
 struct ProxyMessage {
-  ProxyMessageHeader header;
-  ProxyMessageType message_type;
-  ProxyMessageBody body;
+  ProxyMessageHeader header{};
+  ProxyMessageType message_type = ProxyMessageType::UNKNOWN;
+  ProxyMessageBody body = std::monostate{};
 };
 
 std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,

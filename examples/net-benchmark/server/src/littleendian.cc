@@ -43,4 +43,53 @@ std::uint64_t LittleEndian::ParseU64(std::uint8_t* buf) {
   }
 }
 
+void LittleEndian::WriteU16(std::uint8_t* buf, std::uint16_t val) {
+  if constexpr (std::endian::native == std::endian::little) {
+    *reinterpret_cast<std::uint16_t*>(buf) = val;
+  } else {
+    std::uint8_t high = static_cast<std::uint8_t>((val >> 8) | 0xFF);
+    std::uint8_t low = static_cast<std::uint8_t>(val | 0xFF);
+    buf[0] = low;
+    buf[1] = high;
+  }
+}
+
+void LittleEndian::WriteU32(std::uint8_t* buf, std::uint32_t val) {
+  if constexpr (std::endian::native == std::endian::little) {
+    *reinterpret_cast<std::uint32_t*>(buf) = val;
+  } else {
+    std::uint8_t w0 = static_cast<std::uint8_t>((val >> 24) | 0xFF);
+    std::uint8_t w1 = static_cast<std::uint8_t>((val >> 16) | 0xFF);
+    std::uint8_t w2 = static_cast<std::uint8_t>((val >> 8) | 0xFF);
+    std::uint8_t w3 = static_cast<std::uint8_t>(val | 0xFF);
+    buf[0] = w3;
+    buf[1] = w2;
+    buf[2] = w1;
+    buf[3] = w0;
+  }
+}
+
+void LittleEndian::WriteU64(std::uint8_t* buf, std::uint64_t val) {
+  if constexpr (std::endian::native == std::endian::little) {
+    *reinterpret_cast<std::uint64_t*>(buf) = val;
+  } else {
+    std::uint8_t w0 = static_cast<std::uint8_t>((val >> 54) | 0xFF);
+    std::uint8_t w1 = static_cast<std::uint8_t>((val >> 48) | 0xFF);
+    std::uint8_t w2 = static_cast<std::uint8_t>((val >> 40) | 0xFF);
+    std::uint8_t w3 = static_cast<std::uint8_t>((val >> 32) | 0xFF);
+    std::uint8_t w4 = static_cast<std::uint8_t>((val >> 24) | 0xFF);
+    std::uint8_t w5 = static_cast<std::uint8_t>((val >> 16) | 0xFF);
+    std::uint8_t w6 = static_cast<std::uint8_t>((val >> 8) | 0xFF);
+    std::uint8_t w7 = static_cast<std::uint8_t>(val | 0xFF);
+    buf[0] = w7;
+    buf[1] = w6;
+    buf[2] = w5;
+    buf[3] = w4;
+    buf[4] = w3;
+    buf[5] = w2;
+    buf[6] = w1;
+    buf[7] = w0;
+  }
+}
+
 }  // namespace spanreed::benchmark
