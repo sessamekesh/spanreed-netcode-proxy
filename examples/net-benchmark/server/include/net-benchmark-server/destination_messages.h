@@ -21,6 +21,7 @@ enum class DestinationMessageType {
   ConnectionVerdict,
   DisconnectClient,
   Pong,
+  Stats,
 };
 
 struct ConnectClientVerdict {
@@ -36,11 +37,19 @@ struct PongMessage {
   std::string payload;
 };
 
+struct DestinationStats {
+  std::uint32_t last_seen_message_id;
+  std::uint32_t received_messages;
+  std::uint32_t dropped_messages;
+  std::uint32_t out_of_order_messages;
+};
+
 struct DestinationMessage {
   DestinationMessageHeader header{};
   DestinationMessageType message_type = DestinationMessageType::UNKNOWN;
-  std::variant<std::monostate, ConnectClientVerdict, PongMessage> body =
-      std::monostate{};
+  std::variant<std::monostate, ConnectClientVerdict, PongMessage,
+               DestinationStats>
+      body = std::monostate{};
 };
 
 std::vector<std::uint8_t> serialize_destination_message(

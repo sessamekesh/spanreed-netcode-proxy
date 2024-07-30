@@ -11,6 +11,7 @@ struct ConnectedClient {
   std::uint32_t ack_field;
   std::uint32_t next_message_id;
 
+  std::uint32_t received_messages;
   std::uint32_t dropped_messages;
   std::uint32_t out_of_order_messages;
 };
@@ -27,6 +28,7 @@ BenchmarkApp::BenchmarkApp(
       is_running_(false) {}
 
 void BenchmarkApp::Start() {
+  log->info("App loop starting");
   is_running_ = true;
 
   std::unordered_map</* client_id= */ std::uint32_t, ConnectedClient> clients;
@@ -37,6 +39,8 @@ void BenchmarkApp::Start() {
       continue;
     }
 
+    //
+    // Pre-process:
     switch (msg.message_type) {
       case ProxyMessageType::ConnectClient: {
         ConnectedClient new_client{};
@@ -47,20 +51,84 @@ void BenchmarkApp::Start() {
       case ProxyMessageType::DisconnectClient: {
         clients.erase(msg.header.client_id);
       } break;
+    }
+
+    //
+    // Process:
+    auto it = clients.find(msg.header.client_id);
+    if (it == clients.end()) break;
+
+    auto& client = it->second;
+    client.received_messages++;
+
+    int shift = msg.header.message_id - client.last_seen_message_id;
+    if (shift < 0 && shift >= -32) {
+      // Out of order message! Go back and ACK the old one
+      client.out_of_order_messages++;
+      client.ack_field |= (0b1 << -shift);
+    } else if (shift > 0) {
+      client.last_seen_message_id = msg.header.message_id;
+      for (int i = 0; i < shift; i++) {
+        if ((client.ack_field & (0b1 << i)) == 0) {
+          client.dropped_messages++;
+        }
+      }
+      client.ack_field <<= shift;
+    }
+
+    switch (msg.message_type) {
       case ProxyMessageType::Ping: {
-        auto it = clients.find(msg.header.client_id);
-        if (it == clients.end()) break;
+        auto& ping = std::get<PingMessage>(msg.body);
 
-        auto& client = it->second;
+        DestinationMessage response{};
+        response.header.client_id = msg.header.client_id;
+        response.header.ack_field = client.ack_field;
+        response.header.last_seen_client_message_id =
+            client.last_seen_message_id;
+        response.header.magic_header = msg.header.magic_header;
+        response.header.message_id = client.next_message_id++;
+        response.message_type = DestinationMessageType::Pong;
 
-        // TODO (sessamekesh): Ack fields+store metrics data
-        // TODO (sessamekesh): Pong!
+        PongMessage pong_body{};
+        pong_body.client_send_ts = ping.client_send_ts;
+        pong_body.payload = ping.payload;
+        pong_body.proxy_forward_client_ts = ping.proxy_forward_client_ts;
+        pong_body.proxy_recv_client_ts = ping.proxy_recv_client_ts;
+        pong_body.server_recv_ts = ping.server_recv_ts;
+        pong_body.server_send_ts = 1;  // Will be overwritten in UdpServer
 
+        response.body = pong_body;
+
+        udp_server_->QueueMessage(std::move(response));
+      } break;
+      case ProxyMessageType::GetStats: {
+        DestinationMessage response{};
+        response.header.client_id = msg.header.client_id;
+        response.header.ack_field = client.ack_field;
+        response.header.last_seen_client_message_id =
+            client.last_seen_message_id;
+        response.header.magic_header = msg.header.magic_header;
+        response.header.message_id = client.next_message_id++;
+        response.message_type = DestinationMessageType::Stats;
+
+        DestinationStats stats{};
+        stats.dropped_messages = client.dropped_messages;
+        stats.last_seen_message_id = client.last_seen_message_id;
+        stats.out_of_order_messages = client.out_of_order_messages;
+        stats.received_messages = client.received_messages;
+        response.body = stats;
+
+        udp_server_->QueueMessage(std::move(response));
       } break;
     }
   }
+
+  log->info("App successfully finished running");
 }
 
-void BenchmarkApp::Stop() { is_running_ = false; }
+void BenchmarkApp::Stop() {
+  log->info("Marking app for stop");
+  is_running_ = false;
+}
 
 }  // namespace spanreed::benchmark

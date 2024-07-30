@@ -78,7 +78,8 @@ UdpServer::UdpServer(
       log(spdlog::stdout_color_mt("UdpServer")),
       timer_(timer),
       outgoing_messages_(64),
-      incoming_messages_(incoming_message_queue) {}
+      incoming_messages_(incoming_message_queue),
+      on_exit_(nullptr) {}
 
 void UdpServer::QueueMessage(DestinationMessage msg) {
   outgoing_messages_.enqueue(std::move(msg));
@@ -98,6 +99,11 @@ bool UdpServer::Start() {
     log->error("Could not create server socket: {}", get_last_socket_error());
     return false;
   }
+
+  timeval tv{};
+  tv.tv_sec = 5000;
+  setsockopt(server_socket, SOL_SOCKET, SO_RCVTIMEO,
+             reinterpret_cast<char*>(&tv), sizeof(timeval));
 
   sockaddr_in server_addr{};
   server_addr.sin_family = AF_INET;
@@ -135,6 +141,15 @@ bool UdpServer::Start() {
       if (ISSOCKERR(message_length =
                         recvfrom(server_socket, message, BUFLEN, 0x00,
                                  (struct sockaddr*)&recv_addr, &slen))) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAETIMEDOUT) {
+#else
+        if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
+#endif
+          log->debug("No message received for 5 seconds");
+          continue;
+        }
+
         log->error("recvfrom() failed with error: {}", get_last_socket_error());
         allowable_remaining_errors--;
         if (allowable_remaining_errors < 0) {
@@ -273,6 +288,9 @@ bool UdpServer::Start() {
 void UdpServer::Stop() {
   log->info("Marking UDP server for stop");
   is_running_ = false;
+  if (on_exit_) {
+    on_exit_();
+  }
 }
 
 // Stuff

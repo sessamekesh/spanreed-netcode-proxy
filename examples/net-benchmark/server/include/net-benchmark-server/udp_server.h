@@ -28,6 +28,8 @@ class UdpServer {
 
   moodycamel::ConcurrentQueue<DestinationMessage> outgoing_messages_;
   moodycamel::ConcurrentQueue<ProxyMessage>* incoming_messages_;
+
+  std::function<void()> on_exit_;
 };
 
 }  // namespace spanreed::benchmark

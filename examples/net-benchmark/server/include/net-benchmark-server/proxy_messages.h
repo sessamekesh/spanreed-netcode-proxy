@@ -24,6 +24,7 @@ enum class ProxyMessageType {
   ConnectClient,
   DisconnectClient,
   Ping,
+  GetStats,
 };
 
 struct PingMessage {

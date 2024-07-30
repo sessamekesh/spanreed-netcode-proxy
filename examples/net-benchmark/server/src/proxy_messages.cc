@@ -86,8 +86,10 @@ std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,
       return {};
     }
     msg.body = *maybe_ping;
+  } else if (msgType == 4) {
+    msg.message_type = ProxyMessageType::GetStats;
   } else {
-    ::getLogger()->warn("Expected msgType in range [1,3], got {}", msgType);
+    ::getLogger()->warn("Expected msgType in range [1,4], got {}", msgType);
     return {};
   }
 
