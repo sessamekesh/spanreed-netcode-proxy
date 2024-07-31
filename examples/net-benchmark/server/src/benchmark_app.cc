@@ -46,6 +46,7 @@ void BenchmarkApp::Start() {
         ConnectedClient new_client{};
         new_client.client_id = msg.header.client_id;
         new_client.last_seen_message_id = msg.header.message_id;
+        new_client.ack_field = ~0x0;
         clients[msg.header.client_id] = new_client;
       } break;
       case ProxyMessageType::DisconnectClient: {
@@ -62,10 +63,13 @@ void BenchmarkApp::Start() {
     client.received_messages++;
 
     int shift = msg.header.message_id - client.last_seen_message_id;
-    if (shift < 0 && shift >= -32) {
-      // Out of order message! Go back and ACK the old one
+    if (shift < 0) {
+      // Out of order message!
       client.out_of_order_messages++;
-      client.ack_field |= (0b1 << -shift);
+      // Go back and ACK if possible
+      if (shift >= -32) {
+        client.ack_field |= (0b1 << -shift);
+      }
     } else if (shift > 0) {
       client.last_seen_message_id = msg.header.message_id;
       for (int i = 0; i < shift; i++) {
@@ -74,18 +78,28 @@ void BenchmarkApp::Start() {
         }
       }
       client.ack_field <<= shift;
+      client.ack_field |= (0b1 << (shift - 1));
     }
 
+    DestinationMessage response{};
+    response.header.client_id = msg.header.client_id;
+    response.header.ack_field = client.ack_field;
+    response.header.last_seen_client_message_id = client.last_seen_message_id;
+    response.header.magic_header = msg.header.magic_header;
+
     switch (msg.message_type) {
+      case ProxyMessageType::ConnectClient: {
+        response.header.message_id = client.next_message_id++;
+        response.message_type = DestinationMessageType::ConnectionVerdict;
+
+        ConnectClientVerdict verdict{};
+        verdict.verdict = true;
+        response.body = verdict;
+
+        udp_server_->QueueMessage(std::move(response));
+      } break;
       case ProxyMessageType::Ping: {
         auto& ping = std::get<PingMessage>(msg.body);
-
-        DestinationMessage response{};
-        response.header.client_id = msg.header.client_id;
-        response.header.ack_field = client.ack_field;
-        response.header.last_seen_client_message_id =
-            client.last_seen_message_id;
-        response.header.magic_header = msg.header.magic_header;
         response.header.message_id = client.next_message_id++;
         response.message_type = DestinationMessageType::Pong;
 
@@ -102,12 +116,6 @@ void BenchmarkApp::Start() {
         udp_server_->QueueMessage(std::move(response));
       } break;
       case ProxyMessageType::GetStats: {
-        DestinationMessage response{};
-        response.header.client_id = msg.header.client_id;
-        response.header.ack_field = client.ack_field;
-        response.header.last_seen_client_message_id =
-            client.last_seen_message_id;
-        response.header.magic_header = msg.header.magic_header;
         response.header.message_id = client.next_message_id++;
         response.message_type = DestinationMessageType::Stats;
 

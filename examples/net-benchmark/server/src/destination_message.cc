@@ -31,10 +31,22 @@ static void serialize_pong_message(std::uint8_t* buff,
   LittleEndian::WriteU64(buff + 16, pong.proxy_forward_client_ts);
   LittleEndian::WriteU64(buff + 24, pong.server_recv_ts);
   LittleEndian::WriteU64(buff + 32, pong.server_send_ts);
-  LittleEndian::WriteU16(buff + 40,
+  /* proxy_recv_destintation_ts= */ LittleEndian::WriteU64(buff + 40, 0x00);
+  /* proxy_send_destintation_ts= */ LittleEndian::WriteU64(buff + 48, 0x00);
+  LittleEndian::WriteU16(buff + 56,
                          static_cast<std::uint16_t>(pong.payload.length()));
-  memcpy(buff + 42, &pong.payload[0], pong.payload.length());
+  memcpy(buff + 58, &pong.payload[0], pong.payload.length());
 }
+
+static void serialize_net_stats(std::uint8_t* buff,
+                                const DestinationStats& stats) {
+  LittleEndian::WriteU32(buff, stats.last_seen_message_id);
+  LittleEndian::WriteU32(buff + 4, stats.received_messages);
+  LittleEndian::WriteU32(buff + 8, stats.dropped_messages);
+  LittleEndian::WriteU32(buff + 12, stats.out_of_order_messages);
+}
+
+// TODO (sessamekesh): Serialize net stats!
 
 std::vector<std::uint8_t> serialize_destination_message(
     const DestinationMessage& msg) {
@@ -42,7 +54,9 @@ std::vector<std::uint8_t> serialize_destination_message(
   if (msg.message_type == DestinationMessageType::ConnectionVerdict) {
     buff_size += 1;
   } else if (msg.message_type == DestinationMessageType::Pong) {
-    buff_size += 42 + std::get<PongMessage>(msg.body).payload.length();
+    buff_size += 58 + std::get<PongMessage>(msg.body).payload.length();
+  } else if (msg.message_type == DestinationMessageType::Stats) {
+    buff_size += sizeof(DestinationStats);
   }
 
   if (buff_size > 10240ull) {
@@ -77,6 +91,9 @@ std::vector<std::uint8_t> serialize_destination_message(
     case DestinationMessageType::Pong:
       *(raw_buff + 16) = 0x3;
       break;
+    case DestinationMessageType::Stats:
+      *(raw_buff + 16) = 0x4;
+      break;
   }
 
   if (msg.message_type == DestinationMessageType::ConnectionVerdict) {
@@ -84,6 +101,8 @@ std::vector<std::uint8_t> serialize_destination_message(
                               std::get<ConnectClientVerdict>(msg.body));
   } else if (msg.message_type == DestinationMessageType::Pong) {
     serialize_pong_message(raw_buff + 17, std::get<PongMessage>(msg.body));
+  } else if (msg.message_type == DestinationMessageType::Stats) {
+    serialize_net_stats(raw_buff + 17, std::get<DestinationStats>(msg.body));
   }
 
   return buff;

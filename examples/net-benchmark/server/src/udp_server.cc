@@ -78,8 +78,7 @@ UdpServer::UdpServer(
       log(spdlog::stdout_color_mt("UdpServer")),
       timer_(timer),
       outgoing_messages_(64),
-      incoming_messages_(incoming_message_queue),
-      on_exit_(nullptr) {}
+      incoming_messages_(incoming_message_queue) {}
 
 void UdpServer::QueueMessage(DestinationMessage msg) {
   outgoing_messages_.enqueue(std::move(msg));
@@ -100,10 +99,16 @@ bool UdpServer::Start() {
     return false;
   }
 
+#ifdef _WIN32
+  DWORD mstimeout = 5000;
+  setsockopt(server_socket, SOL_SOCKET, SO_RCVTIMEO,
+             reinterpret_cast<char*>(&mstimeout), sizeof(DWORD));
+#else
   timeval tv{};
-  tv.tv_sec = 5000;
+  tv.tv_sec = 5;
   setsockopt(server_socket, SOL_SOCKET, SO_RCVTIMEO,
              reinterpret_cast<char*>(&tv), sizeof(timeval));
+#endif
 
   sockaddr_in server_addr{};
   server_addr.sin_family = AF_INET;
@@ -144,7 +149,7 @@ bool UdpServer::Start() {
 #ifdef _WIN32
         if (WSAGetLastError() == WSAETIMEDOUT) {
 #else
-        if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
+        if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
 #endif
           log->debug("No message received for 5 seconds");
           continue;
@@ -158,6 +163,7 @@ bool UdpServer::Start() {
           is_success = false;
           return;
         }
+        continue;
       }
 
       // handle recv message with buffer contents
@@ -183,6 +189,22 @@ bool UdpServer::Start() {
                   parsed_msg->header.client_id);
         std::lock_guard lg(mut_clients);
         clients.erase(parsed_msg->header.client_id);
+      }
+
+      {
+        std::shared_lock lg(mut_clients);
+        auto it = clients.find(parsed_msg->header.client_id);
+        if (it == clients.end()) {
+          continue;
+        }
+
+        if (!::cmp_addr(it->second.client_addr, recv_addr)) {
+          log->warn(
+              "Message received for client {} came from wrong address, "
+              "ignoring",
+              parsed_msg->header.client_id);
+          continue;
+        }
       }
 
       incoming_messages_->enqueue(*std::move(parsed_msg));
@@ -288,9 +310,6 @@ bool UdpServer::Start() {
 void UdpServer::Stop() {
   log->info("Marking UDP server for stop");
   is_running_ = false;
-  if (on_exit_) {
-    on_exit_();
-  }
 }
 
 // Stuff
