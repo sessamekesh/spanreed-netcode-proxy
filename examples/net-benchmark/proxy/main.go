@@ -10,7 +10,9 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
+	"github.com/sessamekesh/spanreed-netcode-proxy/examples/net-benchmark/proxy/bmproxy"
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/proxy"
+
 	"go.uber.org/zap"
 )
 
@@ -41,26 +43,34 @@ func main() {
 		return
 	}
 
-	port, portErr := strconv.ParseUint(os.Getenv("SPANREED_SERVER_PORT"), 0, 16)
+	port, portErr := strconv.ParseUint(os.Getenv("SPANREED_WT_SERVER_PORT"), 0, 16)
 	if portErr != nil {
-		logger.Error("Invalid value for SPANREED_SERVER_PORT, falling back to 3000")
+		logger.Error("Invalid value for SPANREED_WT_SERVER_PORT, falling back to 3000")
 		port = 3000
 	}
 
+	udpPort, udpPortErr := strconv.ParseUint(os.Getenv("SPANREED_UDP_SERVER_PORT"), 0, 16)
+	if udpPortErr != nil {
+		logger.Error("Invalid value for SPANREED_UDP_SERVER_PORT, falling back to 30300")
+		udpPort = 30300
+	}
+
 	//
-	// Proxy setup + attach custom handlers
+	// Proxy setup
 	proxy := proxy.CreateProxy(proxy.ProxyConfig{
 		Logger: logger,
 	})
 	shutdownCtx, shutdownRelease := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer shutdownRelease()
 
+	//
+	// WebTransport handler
 	wtHandler, wtHandlerErr := proxy.CreateClientMessageHandler("Benchmark WebTransport Client Handler")
 	if wtHandlerErr != nil {
 		logger.Error("Could not create WT handler", zap.Error(wtHandlerErr))
 		return
 	}
-	wtClient, wtClientErr := CreateWebtransportBenchmarkHandler(wtHandler, WebtransportBenchmarkClientParams{
+	wtClient, wtClientErr := bmproxy.CreateWebtransportBenchmarkHandler(wtHandler, bmproxy.WebtransportBenchmarkClientParams{
 		CertPath:   certPath,
 		KeyPath:    keyPath,
 		Logger:     logger,
@@ -69,6 +79,23 @@ func main() {
 	})
 	if wtClientErr != nil {
 		logger.Error("Failed to create WT server", zap.Error(wtClientErr))
+		return
+	}
+
+	//
+	// UDP handler
+	udpHandler, udpHandlerErr := proxy.CreateDestinationMessageHandler("Benchmark UDP Destination Handler", func(s string) bool { return true })
+	if udpHandlerErr != nil {
+		logger.Error("Could not create UDP handler", zap.Error(udpHandlerErr))
+		return
+	}
+	udpServer, udpServerErr := bmproxy.CreateUdpServer(udpHandler, bmproxy.UdpServerParams{
+		Logger:          logger,
+		Port:            uint16(udpPort),
+		DestinationAddr: serverEndpoint,
+	})
+	if udpServerErr != nil {
+		logger.Error("Could not create UDP server", zap.Error(udpServerErr))
 		return
 	}
 
@@ -88,6 +115,14 @@ func main() {
 		logger.Info("Starting top-level WT handler goroutine")
 		defer logger.Info("Stopping top-level WT handler goroutine")
 		wtClient.Start(shutdownCtx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		logger.Info("Starting top-level UDP handler goroutine")
+		defer logger.Info("Stopping top-level UDP handler goroutine")
+		udpServer.Start(shutdownCtx)
 	}()
 
 	wg.Wait()

@@ -1,4 +1,4 @@
-package main
+package bmproxy
 
 import (
 	"context"
@@ -48,7 +48,7 @@ func CreateWebtransportBenchmarkHandler(proxyConnection *handlers.ClientMessageH
 	}
 
 	if params.CertPath == "" || params.KeyPath == "" {
-		return nil, errors.New("Missing cert or key path, cannot create HTTP3 server")
+		return nil, errors.New("missing cert or key path, cannot create HTTP3 server")
 	}
 
 	return &webtransportBenchmarkClient{
@@ -229,7 +229,7 @@ func (wt *webtransportBenchmarkClient) Start(ctx context.Context) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		wt.onWtRequest(ctx, w, r)
 	})
 

@@ -1,4 +1,4 @@
-package main
+package bmproxy
 
 import "encoding/binary"
 
@@ -22,6 +22,30 @@ func GetDestinationMessageType(payload []byte) DestinationMessageType {
 	}
 
 	return DestinationMessageType_Unknown
+}
+
+func GetDestinationClientId(payload []byte) uint32 {
+	if len(payload) < 8 {
+		return 0xFFFFFFFF
+	}
+
+	return binary.LittleEndian.Uint32(payload[4:])
+}
+
+func SetClientId(payload []byte, clientId uint32) {
+	if len(payload) < 8 {
+		return
+	}
+
+	binary.LittleEndian.PutUint32(payload[4:], clientId)
+}
+
+func GetVerdict(payload []byte) bool {
+	if len(payload) < 18 {
+		return false
+	}
+
+	return payload[17] > 0
 }
 
 func SetPongRecvTimestamp(payload []byte, timestamp uint64) []byte {
