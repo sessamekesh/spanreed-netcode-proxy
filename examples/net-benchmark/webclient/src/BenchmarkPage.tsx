@@ -1,11 +1,27 @@
-import React, { useState } from "react";
-import { LogLevel } from "./log";
+import React, { useCallback, useState } from "react";
+import { DefaultLogCb, LogLevel } from "./log";
 import { Console } from "./Console";
+import { BenchmarkParams } from "./BenchmarkParams";
 
 export const BenchmarkPage: React.FC = () => {
   const [lines, setLines] = useState<
     Array<{ msg: string; logLevel: LogLevel }>
   >([]);
+
+  const LogFn = useCallback(
+    (msg: string, logLevel: LogLevel = LogLevel.Info) => {
+      DefaultLogCb(msg, logLevel);
+      setLines((old) => [...old, { msg, logLevel }]);
+    }, [setLines]);
+
+  const RunBenchmark = useCallback(async (spanUrl: string, destUrl: string, pingCt: number, gapMs: number, payloadSize: number) => {
+    LogFn(`Starting benchmark (ct=${pingCt} gapms=${gapMs} msglen=${payloadSize})`);
+
+    // TODO (sessamekesh): Start up WebTransport connection + benchmark stuff
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    LogFn('Benchmark finished!');
+  }, [LogFn]);
 
   return (
     <OuterContainer>
@@ -19,6 +35,7 @@ export const BenchmarkPage: React.FC = () => {
       >
         Hello Spanreed Client
       </span>
+      <BenchmarkParams logCb={LogFn} onRunBenchmark={RunBenchmark} />
       <Console lines={lines} />
     </OuterContainer>
   );
