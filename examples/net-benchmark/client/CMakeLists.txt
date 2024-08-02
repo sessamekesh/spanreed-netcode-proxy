@@ -28,6 +28,15 @@ set_property(TARGET client-common PROPERTY CXX_STANDARD 20)
 target_include_directories(client-common PUBLIC include)
 
 if (EMSCRIPTEN)
+  add_executable(web-client "web/embind.cc")
+  set_property(TARGET web-client PROPERTY CXX_STANDARD 20)
+  target_link_libraries(web-client PRIVATE client-common)
+
+  target_link_options(web-client
+    PUBLIC "SHELL:--bind -s WASM=1 -s MODULARIZE=1 -s ENVIRONMENT=web -s WASM_BIGINT=1"
+    PUBLIC "SHELL:-s EXIT_RUNTIME=0 -s FILESYSTEM=0 -O3"
+    PUBLIC "SHELL:-s EXPORT_NAME=BenchmarkWebClient -lembind")
+  target_compile_options(web-client PUBLIC -O3)
 else ()
   FetchContent_Declare(
     concurrentqueue
@@ -45,10 +54,10 @@ else ()
     ${native-client-src}
     "native/main.cc")
   target_link_libraries(native-client PRIVATE concurrentqueue)
+  set_property(TARGET native-client PROPERTY CXX_STANDARD 20)
+  target_link_libraries(native-client PRIVATE client-common)
+  if (WIN32)
+    target_link_libraries(native-client PRIVATE wsock32 ws2_32)
+  endif ()
 endif ()
 
-set_property(TARGET native-client PROPERTY CXX_STANDARD 20)
-target_link_libraries(native-client PRIVATE client-common)
-if (WIN32)
-  target_link_libraries(native-client PRIVATE wsock32 ws2_32)
-endif ()
