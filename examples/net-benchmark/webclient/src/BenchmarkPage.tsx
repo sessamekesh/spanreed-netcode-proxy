@@ -1,18 +1,28 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { DefaultLogCb, LogLevel } from "./log";
 import { Console } from "./Console";
 import { BenchmarkParams } from "./BenchmarkParams";
+import { BenchmarkWasmModule } from "./BenchmarkWasmWrapper";
 
 export const BenchmarkPage: React.FC = () => {
   const [lines, setLines] = useState<
     Array<{ msg: string; logLevel: LogLevel }>
   >([]);
+  const [benchmarkModule, setBenchmarkModule] = useState<BenchmarkWasmModule>();
 
   const LogFn = useCallback(
     (msg: string, logLevel: LogLevel = LogLevel.Info) => {
       DefaultLogCb(msg, logLevel);
       setLines((old) => [...old, { msg, logLevel }]);
     }, [setLines]);
+
+  useEffect(() => {
+    BenchmarkWasmModule.Create().then((m) => {
+      setBenchmarkModule(m);
+    }).catch((e) => {
+      LogFn('Failed to load Benchmark Wasm Module', LogLevel.Error);
+    });
+  }, [setBenchmarkModule, LogFn]);
 
   const RunBenchmark = useCallback(async (spanUrl: string, destUrl: string, pingCt: number, gapMs: number, payloadSize: number) => {
     LogFn(`Starting benchmark (ct=${pingCt} gapms=${gapMs} msglen=${payloadSize})`);

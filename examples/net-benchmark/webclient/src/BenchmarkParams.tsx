@@ -3,6 +3,7 @@ import { DefaultLogCb, LogCb, WrapLogFn } from "./log";
 import { Button } from "./Button";
 
 interface BenchmarkParamsProps {
+  // TODO (sessamekesh): Use an observable here instead that gives progress reports (show RTT pongs, drops, OOOs)
   onRunBenchmark?: (spanAddr: string, destAddr: string, pingCt: number, gapMs: number, payloadSize: number) => Promise<void>;
   logCb?: LogCb;
 }
