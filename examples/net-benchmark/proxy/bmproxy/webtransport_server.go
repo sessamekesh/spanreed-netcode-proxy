@@ -77,7 +77,6 @@ func (wt *webtransportBenchmarkClient) onWtRequest(ctx context.Context, w http.R
 	defer routeCancel()
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
 
 	clientId, clientIdErr := wt.proxyConnection.GetNextClientId()
 	if clientIdErr != nil {
@@ -114,7 +113,18 @@ func (wt *webtransportBenchmarkClient) onWtRequest(ctx context.Context, w http.R
 	}
 
 	//
+	// Context cancellation on close request
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-closeRequest
+		routeCancel()
+	}()
+
+	//
 	// Incoming Client Messages (start before verdict handling)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 
@@ -242,6 +252,9 @@ func (wt *webtransportBenchmarkClient) Start(ctx context.Context) error {
 			Handler:         mux,
 			EnableDatagrams: true,
 		},
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
 	}
 
 	wg := sync.WaitGroup{}
@@ -275,7 +288,7 @@ func (wt *webtransportBenchmarkClient) Start(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 
-		wt.log.Info("Starting WT HTTP3 server on port 30100")
+		wt.log.Info("Starting WT HTTP3 server", zap.String("addr", wt.params.ListenAddr))
 		defer wt.log.Info("Shutdown WT HTTP3 server")
 
 		if err := wt.s.ListenAndServeTLS(wt.params.CertPath, wt.params.KeyPath); err != nil {

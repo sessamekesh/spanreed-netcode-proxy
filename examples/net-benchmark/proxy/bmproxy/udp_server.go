@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sessamekesh/spanreed-netcode-proxy/pkg/handlers"
 	"go.uber.org/zap"
@@ -72,7 +73,11 @@ func (s *udpServer) Start(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 
+		s.logger.Info("Starting UDP listener goroutine")
+		defer s.logger.Info("Stopping UDP listener goroutine")
+
 		for {
+			conn.SetReadDeadline(time.Now().Add(time.Second * 15))
 			var buf [10240]byte
 			bytesRead, clientAddr, err := conn.ReadFromUDP(buf[0:])
 			if err != nil {
@@ -88,8 +93,10 @@ func (s *udpServer) Start(ctx context.Context) error {
 				}
 			}
 
-			if clientAddr != s.destAddr {
-				s.logger.Info("Message did not come from destination, skipping")
+			if !clientAddr.IP.Equal(s.destAddr.IP) ||
+				clientAddr.Port != s.destAddr.Port {
+				s.logger.Info("Message did not come from destination, skipping", zap.String("clientAddr", clientAddr.String()),
+					zap.String("expectedAddr", s.destAddr.String()))
 				continue
 			}
 
@@ -107,6 +114,7 @@ func (s *udpServer) Start(ctx context.Context) error {
 				s.logger.Warn("Invalid message type from client")
 				return
 			case DestinationMessageType_ConnectionVerdict:
+				s.logger.Info("Received auth verdict", zap.Uint32("clientId", clientId), zap.Bool("verdict", GetVerdict((payload))))
 				s.proxyConnection.OpenClientVerdictChannel <- handlers.OpenClientConnectionVerdict{
 					ClientId: clientId,
 					Verdict:  GetVerdict(payload),
