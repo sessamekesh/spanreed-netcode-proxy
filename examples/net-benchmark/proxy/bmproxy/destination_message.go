@@ -7,8 +7,9 @@ type DestinationMessageType byte
 const (
 	DestinationMessageType_Unknown           DestinationMessageType = 0
 	DestinationMessageType_ConnectionVerdict DestinationMessageType = 1
-	DestinationMessageType_Pong              DestinationMessageType = 2
-	DestinationMessageType_Stats             DestinationMessageType = 3
+	DestinationMessageType_DisconnectClient  DestinationMessageType = 2
+	DestinationMessageType_Pong              DestinationMessageType = 3
+	DestinationMessageType_Stats             DestinationMessageType = 4
 )
 
 func GetDestinationMessageType(payload []byte) DestinationMessageType {

@@ -75,6 +75,7 @@ EMSCRIPTEN_BINDINGS(BenchmarkWebClient)
 
   function("on_recv_message", &on_recv_message);
   function("maybe_send_msg", &maybe_send_msg);
+  function("RttAggregatesFrom", &spanreed::benchmark::RttAggregates::From);
 
   value_object<spanreed::benchmark::Aggregate>("Aggregate")
       .field("Min", &spanreed::benchmark::Aggregate::Min)
@@ -93,6 +94,14 @@ EMSCRIPTEN_BINDINGS(BenchmarkWebClient)
       .field("ClientProxyNetTime", &spanreed::benchmark::RttAggregates::ClientProxyNetTime)
       .field("ProxyDestNetTime", &spanreed::benchmark::RttAggregates::ProxyDestNetTime);
 
+  value_object<spanreed::benchmark::RttSample>("RttSample")
+      .field("ClientRTT", &spanreed::benchmark::RttSample::ClientRTT)
+      .field("ProxyRTT", &spanreed::benchmark::RttSample::ProxyRTT)
+      .field("DestProcessTime", &spanreed::benchmark::RttSample::DestProcessTime)
+      .field("ProxyProcessTime", &spanreed::benchmark::RttSample::ProxyProcessTime)
+      .field("ClientProxyNetTime", &spanreed::benchmark::RttSample::ClientProxyNetTime)
+      .field("ProxyDestNetTime", &spanreed::benchmark::RttSample::ProxyDestNetTime);
+
   register_vector<spanreed::benchmark::RttSample>("VectorRttSample");
 
   value_object<spanreed::benchmark::ExperimentResults>("ExperimentResults")
@@ -106,4 +115,5 @@ EMSCRIPTEN_BINDINGS(BenchmarkWebClient)
       .field("rtt_measurements", &spanreed::benchmark::ExperimentResults::rtt_measurements);
 
   register_optional<spanreed::benchmark::ExperimentResults>();
+  register_optional<spanreed::benchmark::RttAggregates>();
 }

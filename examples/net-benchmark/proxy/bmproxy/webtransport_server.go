@@ -329,7 +329,7 @@ func (wt *webtransportBenchmarkClient) handleProxyCloseRequest(closeRequest hand
 }
 
 func (wt *webtransportBenchmarkClient) handleProxyMessageRequest(msgRequest handlers.ClientMessage) {
-	wt.log.Info("Received ProxyCloseRequset", zap.Uint32("clientId", msgRequest.ClientId))
+	wt.log.Info("Received Proxy Message", zap.Uint32("clientId", msgRequest.ClientId))
 
 	wt.mut_connections.Lock()
 	defer wt.mut_connections.Unlock()
@@ -344,7 +344,7 @@ func (wt *webtransportBenchmarkClient) handleProxyMessageRequest(msgRequest hand
 }
 
 func (wt *webtransportBenchmarkClient) handleProxyVerdict(verdictMsg handlers.OpenClientConnectionVerdict) {
-	wt.log.Info("Received ProxyCloseRequset", zap.Uint32("clientId", verdictMsg.ClientId))
+	wt.log.Info("Received Verdict", zap.Uint32("clientId", verdictMsg.ClientId))
 
 	wt.mut_connections.Lock()
 	defer wt.mut_connections.Unlock()

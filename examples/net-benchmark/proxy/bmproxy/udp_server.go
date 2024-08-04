@@ -67,6 +67,7 @@ func (s *udpServer) Start(ctx context.Context) error {
 	conn.SetWriteBuffer(10240)
 
 	wg := sync.WaitGroup{}
+	is_running := true
 	//
 	// Destination listening goroutine
 	wg.Add(1)
@@ -87,6 +88,12 @@ func (s *udpServer) Start(ctx context.Context) error {
 				} else if strings.Contains(err.Error(), "WSAEMSGSIZE") {
 					//  WINDOWS ONLY - Unix silently discards excess data.
 					s.logger.Warn("Overflow of data, continuing but may be malformed")
+				} else if strings.Contains(err.Error(), "i/o timeout") {
+					if is_running {
+						continue
+					} else {
+						return
+					}
 				} else {
 					s.logger.Error("Error reading UDP datagram, closing", zap.Error(err))
 					return
@@ -144,6 +151,7 @@ func (s *udpServer) Start(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
+				is_running = false
 				return
 			case connReq := <-s.proxyConnection.OpenClientChannel:
 				SetClientId(connReq.AppData, connReq.ClientId)

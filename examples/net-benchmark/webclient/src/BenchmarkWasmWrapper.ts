@@ -1,3 +1,26 @@
+function asNumber(v: unknown) {
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v !== "number") return null;
+  if (isNaN(v)) return null;
+
+  return v;
+}
+
+function asAggregate(v: unknown) {
+  if (typeof v !== "object") return null;
+  if (v == null) return null;
+
+  return {
+    Min: "Min" in v ? asNumber(v["Min"]) : null,
+    Max: "Max" in v ? asNumber(v["Max"]) : null,
+    StdDev: "StdDev" in v ? asNumber(v["StdDev"]) : null,
+    P50: "P50" in v ? asNumber(v["P50"]) : null,
+    P90: "P90" in v ? asNumber(v["P90"]) : null,
+    P95: "P95" in v ? asNumber(v["P95"]) : null,
+    P99: "P99" in v ? asNumber(v["P99"]) : null,
+  };
+}
+
 export class BenchmarkApp {
   constructor(
     private readonly m: any,
@@ -14,7 +37,43 @@ export class BenchmarkApp {
   }
 
   get_results() {
-    return this.app["get_results"]();
+    const raw_results = this.app["get_results"]();
+    if (raw_results == null) {
+      return null;
+    }
+
+    const rtt_aggregates = this.m["RttAggregatesFrom"](
+      raw_results["rtt_measurements"]
+    );
+    raw_results["rtt_measurements"]["delete"]();
+
+    const rtt_measurements = (() => {
+      if (rtt_aggregates == null) return null;
+
+      return {
+        ClientRtt: asAggregate(rtt_aggregates["ClientRTT"]),
+        ProxyRTT: asAggregate(rtt_aggregates["ProxyRTT"]),
+        DestProcessTime: asAggregate(rtt_aggregates["DestProcessTime"]),
+        ProxyProcessTime: asAggregate(rtt_aggregates["ProxyProcessTime"]),
+        ClientProxyNetTime: asAggregate(rtt_aggregates["ClientProxyNetTime"]),
+        ProxyDestNetTime: asAggregate(rtt_aggregates["ProxyDestNetTime"]),
+      };
+    })();
+
+    return {
+      client_dropped_messages: asNumber(raw_results["client_dropped_messages"]),
+      client_out_of_order_messages: asNumber(
+        raw_results["client_out_of_order_messages"]
+      ),
+      client_recv_messages: asNumber(raw_results["client_recv_messages"]),
+      client_sent_messages: asNumber(raw_results["client_sent_messages"]),
+      server_dropped_messages: asNumber(raw_results["server_dropped_messages"]),
+      server_out_of_order_messages: asNumber(
+        raw_results["server_out_of_order_messages"]
+      ),
+      server_recv_messages: asNumber(raw_results["server_recv_messages"]),
+      rtt_measurements,
+    };
   }
 
   add_server_message(msg: Uint8Array): boolean {
@@ -76,6 +135,16 @@ export class BenchmarkWasmModule {
     return new BenchmarkApp(this.m, t, app);
   }
 }
+
+export type BenchmarkResults = {
+  params: {
+    pingCt: number;
+    gapMs: number;
+    pingPayloadSize: number;
+    spanEndpoint: string;
+  };
+  results: ReturnType<BenchmarkApp["get_results"]>;
+};
 
 declare global {
   interface Window {

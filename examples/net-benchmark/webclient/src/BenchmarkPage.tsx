@@ -2,13 +2,15 @@ import React, { useCallback, useEffect, useState } from "react";
 import { DefaultLogCb, LogLevel } from "./log";
 import { Console } from "./Console";
 import { BenchmarkParams } from "./BenchmarkParams";
-import { BenchmarkWasmModule } from "./BenchmarkWasmWrapper";
+import { BenchmarkResults, BenchmarkWasmModule } from "./BenchmarkWasmWrapper";
+import { BenchmarkResultsView } from "./BenchmarkResultsView";
 
 export const BenchmarkPage: React.FC = () => {
   const [lines, setLines] = useState<
     Array<{ msg: string; logLevel: LogLevel }>
   >([]);
   const [benchmarkModule, setBenchmarkModule] = useState<BenchmarkWasmModule>();
+  const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResults>();
 
   const LogFn = useCallback(
     (msg: string, logLevel: LogLevel = LogLevel.Info) => {
@@ -105,7 +107,24 @@ export const BenchmarkPage: React.FC = () => {
         );
 
         wt.close();
-        await Promise.all([readStreamDone, wt.closed]);
+        await Promise.all([readStreamDone, wt.closed]).catch((e) => {
+          if (`${e}`.indexOf("remote WebTransport close") < 0) {
+            LogFn(`Final closing catch problem: ${e}`, LogLevel.Warning);
+          }
+        });
+
+        const results = benchmarkApp.get_results();
+        if (results != null) {
+          setBenchmarkResults({
+            params: {
+              gapMs,
+              pingCt,
+              pingPayloadSize: payloadSize,
+              spanEndpoint: spanUrl,
+            },
+            results,
+          });
+        }
       } catch (e) {
         const errMsg = (() => {
           if (e instanceof Error) {
@@ -120,7 +139,7 @@ export const BenchmarkPage: React.FC = () => {
         cleanupOps.reverse().forEach((op) => op());
       }
     },
-    [LogFn, benchmarkModule]
+    [LogFn, benchmarkModule, setBenchmarkResults]
   );
 
   return (
@@ -136,6 +155,9 @@ export const BenchmarkPage: React.FC = () => {
         Spanreed Netcode Benchmark
       </span>
       <BenchmarkParams logCb={LogFn} onRunBenchmark={RunBenchmark} />
+      {benchmarkResults != null && (
+        <BenchmarkResultsView results={benchmarkResults} />
+      )}
       <Console lines={lines} />
     </OuterContainer>
   );

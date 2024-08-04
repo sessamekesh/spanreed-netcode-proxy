@@ -552,6 +552,7 @@ func (p *proxy) handleClientConnectionRequestMessage(incomingMsg handlers.OpenCl
 	}
 	if rsl != "" {
 		// No-op, this is a duplicate connection request, do not re-establish
+		// TODO (sessamekesh): Forward message without re-attaching
 		p.log.Warn("Unexpected duplicate client ID connection request, ignoring.", zap.Uint32("clientId", incomingMsg.ClientId))
 		return nil
 	}
