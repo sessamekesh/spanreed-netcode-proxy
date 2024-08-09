@@ -43,6 +43,9 @@ void BenchmarkApp::Start() {
     // Pre-process:
     switch (msg.message_type) {
       case ProxyMessageType::ConnectClient: {
+        if (clients.count(msg.header.client_id) > 0)
+          break;  // Don't re-connect, re-send verdict though
+
         ConnectedClient new_client{};
         new_client.client_id = msg.header.client_id;
         new_client.last_seen_message_id = msg.header.message_id;

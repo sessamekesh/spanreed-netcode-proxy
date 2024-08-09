@@ -347,30 +347,45 @@ func (p *proxy) Start(ctx context.Context) {
 		p.log.Info("Starting Spanreed goroutine for handling incoming client messages")
 		defer p.log.Info("Stopped Spanreed goroutine for handlign incoming client messages")
 
+		innerWg := sync.WaitGroup{}
+		defer innerWg.Wait() // Before exiting goroutine, make sure all inner goroutines are finished
+
 		for {
 			select {
 			case <-ctx.Done():
 				p.log.Info("Spanreed incoming client message goroutine attempting graceful shutdown")
 				return
 			case clientMsg := <-p.incomingClientMessageRecvChannel:
-				err := p.forwardClientMessage(clientMsg)
-				if err == nil {
-					p.clientStore.SetClientRecvTimestamp(clientMsg.ClientId, p.getNowTime())
-				} else {
-					p.log.Error("Error handling client message", zap.Uint32("clientId", clientMsg.ClientId), zap.Error(err))
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					err := p.forwardClientMessage(clientMsg)
+					if err == nil {
+						p.clientStore.SetClientRecvTimestamp(clientMsg.ClientId, p.getNowTime())
+					} else {
+						p.log.Error("Error handling client message", zap.Uint32("clientId", clientMsg.ClientId), zap.Error(err))
+					}
+				}()
 			case connRequest := <-p.incomingClientOpenConnectionRecvChannel:
-				p.log.Debug("Spanreed proxy received connection request from client handler")
-				connErr := p.handleClientConnectionRequestMessage(connRequest)
-				if connErr != nil {
-					p.log.Error("Error handling client connection request", zap.Uint32("clientId", connRequest.ClientId), zap.Error(connErr))
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					p.log.Debug("Spanreed proxy received connection request from client handler")
+					connErr := p.handleClientConnectionRequestMessage(connRequest)
+					if connErr != nil {
+						p.log.Error("Error handling client connection request", zap.Uint32("clientId", connRequest.ClientId), zap.Error(connErr))
+					}
+				}()
 			case closeRequest := <-p.incomingClientCloseRequestsRecvChannel:
-				p.log.Debug("Spanreed proxy received a client close request from a client")
-				kickErr := p.kickClient(closeRequest.ClientId, closeRequest.Error)
-				if kickErr != nil {
-					p.log.Error("Error handling client kick request", zap.Error(kickErr))
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					p.log.Debug("Spanreed proxy received a client close request from a client")
+					kickErr := p.kickClient(closeRequest.ClientId, closeRequest.Error)
+					if kickErr != nil {
+						p.log.Error("Error handling client kick request", zap.Error(kickErr))
+					}
+				}()
 			}
 		}
 	}()
@@ -383,28 +398,43 @@ func (p *proxy) Start(ctx context.Context) {
 		p.log.Info("Starting Spanreed goroutine for handling incoming destination messages")
 		defer p.log.Info("Stopped Spanreed goroutine for handling incoming destination messages")
 
+		innerWg := sync.WaitGroup{}
+		defer innerWg.Wait() // Before exiting goroutine, make sure all inner goroutines are finished
+
 		for {
 			select {
 			case <-ctx.Done():
 				p.log.Info("Spanreed incoming destination message goroutine attempting graceful shutdown")
 				return
 			case destinationMsg := <-p.incomingDestinationMessageRecvChannel:
-				err := p.forwardDestinationMessage(destinationMsg)
-				if err == nil {
-					p.clientStore.SetDestinationRecvTimestamp(destinationMsg.ClientId, p.getNowTime())
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					err := p.forwardDestinationMessage(destinationMsg)
+					if err == nil {
+						p.clientStore.SetDestinationRecvTimestamp(destinationMsg.ClientId, p.getNowTime())
+					}
+				}()
 			case verdict := <-p.incomingDestinationVerdictRecvChannel:
-				p.log.Debug("Spanreed proxy received incoming verdict from destination handler to forward on to client")
-				err := p.forwardDestinationVerdict(verdict)
-				if err != nil {
-					p.log.Error("Error forwarding destination verdict", zap.Uint32("clientId", verdict.ClientId), zap.Error(err))
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					p.log.Debug("Spanreed proxy received incoming verdict from destination handler to forward on to client")
+					err := p.forwardDestinationVerdict(verdict)
+					if err != nil {
+						p.log.Error("Error forwarding destination verdict", zap.Uint32("clientId", verdict.ClientId), zap.Error(err))
+					}
+				}()
 			case kick := <-p.incomingDestinationCloseRequestsRecvChannel:
-				p.log.Debug("Spanreed proxy received a destination close request from a client")
-				kickErr := p.kickClient(kick.ClientId, kick.Error)
-				if kickErr != nil {
-					p.log.Error("Error handling destination kick request", zap.Error(kickErr))
-				}
+				innerWg.Add(1)
+				go func() {
+					defer innerWg.Done()
+					p.log.Debug("Spanreed proxy received a destination close request from a client")
+					kickErr := p.kickClient(kick.ClientId, kick.Error)
+					if kickErr != nil {
+						p.log.Error("Error handling destination kick request", zap.Error(kickErr))
+					}
+				}()
 			}
 		}
 	}()

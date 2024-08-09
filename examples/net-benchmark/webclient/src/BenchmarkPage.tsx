@@ -73,7 +73,8 @@ export const BenchmarkPage: React.FC = () => {
 
         benchmarkApp.start_experiment(payloadSize, pingCt);
 
-        const pendingMessages: Uint8Array[] = [];
+        //
+        // On receive a message, immediately notify the benchmark app
         const readStreamDone = (async () => {
           while (true) {
             const maybeReadRsl = await Promise.race([
@@ -85,22 +86,20 @@ export const BenchmarkPage: React.FC = () => {
             if (done) return;
             if (!(value instanceof Uint8Array)) return;
 
-            pendingMessages.push(value);
+            benchmarkApp.add_server_message(value);
           }
         })();
 
         while (benchmarkApp.is_running()) {
-          const maybe_incoming_msg = pendingMessages.shift();
-          if (maybe_incoming_msg != null) {
-            benchmarkApp.add_server_message(maybe_incoming_msg);
-          }
+          let gapPromise = new Promise((resolve) => setTimeout(resolve, gapMs));
 
           const next_msg_opt = benchmarkApp.get_next_message();
           if (next_msg_opt != null) {
             await wtWriter.write(next_msg_opt);
           }
 
-          await new Promise((resolve) => setTimeout(resolve, gapMs));
+          // Pause between message writes
+          await gapPromise;
         }
         LogFn(
           "Benchmark finished! Aggregating results and closing down WebTransport connection..."
