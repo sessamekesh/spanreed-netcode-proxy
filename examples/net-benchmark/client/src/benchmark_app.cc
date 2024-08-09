@@ -221,7 +221,7 @@ std::optional<ClientMessage> BenchmarkApp::get_client_message() {
   }
 
   ClientMessage msg{};
-  msg.header.client_id = 500;
+  msg.header.client_id = 127;
   msg.header.ack_field = ack_field_;
   msg.header.message_id = next_message_id_++;
   msg.header.magic_header = 0x5350414E;

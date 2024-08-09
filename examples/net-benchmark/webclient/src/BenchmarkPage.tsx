@@ -116,11 +116,6 @@ export const BenchmarkPage: React.FC = () => {
         );
 
         wt.close();
-        await Promise.all([readStreamDone, wt.closed]).catch((e) => {
-          if (`${e}`.indexOf("remote WebTransport close") < 0) {
-            LogFn(`Final closing catch problem: ${e}`, LogLevel.Warning);
-          }
-        });
 
         const results = benchmarkApp.get_results();
         if (results != null) {
@@ -134,6 +129,12 @@ export const BenchmarkPage: React.FC = () => {
             results,
           });
         }
+
+        await Promise.all([readStreamDone, wt.closed]).catch((e) => {
+          if (`${e}`.indexOf("remote WebTransport close") < 0) {
+            LogFn(`Final closing catch problem: ${e}`, LogLevel.Warning);
+          }
+        });
       } catch (e) {
         const errMsg = (() => {
           if (e instanceof Error) {
