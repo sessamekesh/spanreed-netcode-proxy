@@ -10,6 +10,16 @@ export const BenchmarkPage: React.FC = () => {
     Array<{ msg: string; logLevel: LogLevel }>
   >([]);
   const [benchmarkModule, setBenchmarkModule] = useState<BenchmarkWasmModule>();
+
+  const DUMMY_AGGREGATS = {
+    Max: 90,
+    Min: 10,
+    P50: 50,
+    P90: 40,
+    P95: 30,
+    P99: 20,
+    StdDev: 1.234,
+  };
   const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResults>();
 
   const LogFn = useCallback(
