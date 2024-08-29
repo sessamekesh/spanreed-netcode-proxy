@@ -49,5 +49,5 @@ func GetDestAddr(payload []byte) string {
 	}
 
 	dest_url_len := payload[17]
-	return string(payload[17 : 17+dest_url_len])
+	return string(payload[18 : 18+dest_url_len])
 }

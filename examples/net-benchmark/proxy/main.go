@@ -70,7 +70,7 @@ func main() {
 		KeyPath:    keyPath,
 		Logger:     logger,
 		ServerAddr: serverEndpoint,
-		ListenAddr: fmt.Sprintf("localhost:%d", port),
+		ListenAddr: fmt.Sprintf(":%d", port),
 	})
 	if wtClientErr != nil {
 		logger.Error("Failed to create WT server", zap.Error(wtClientErr))
