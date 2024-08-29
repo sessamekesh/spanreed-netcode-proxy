@@ -85,9 +85,8 @@ func main() {
 		return
 	}
 	udpServer, udpServerErr := bmproxy.CreateUdpServer(udpHandler, bmproxy.UdpServerParams{
-		Logger:          logger,
-		Port:            uint16(udpPort),
-		DestinationAddr: serverEndpoint,
+		Logger: logger,
+		Port:   uint16(udpPort),
 	})
 	if udpServerErr != nil {
 		logger.Error("Could not create UDP server", zap.Error(udpServerErr))

@@ -14,16 +14,17 @@ import (
 )
 
 type UdpServerParams struct {
-	Logger          *zap.Logger
-	Port            uint16
-	DestinationAddr string
+	Logger *zap.Logger
+	Port   uint16
 }
 
 type udpServer struct {
 	proxyConnection *handlers.DestinationMessageHandler
 	logger          *zap.Logger
 	params          UdpServerParams
-	destAddr        *net.UDPAddr
+
+	mut_connections sync.RWMutex
+	connections     map[uint32]*net.UDPAddr
 }
 
 func CreateUdpServer(proxyConnection *handlers.DestinationMessageHandler, params UdpServerParams) (*udpServer, error) {
@@ -32,17 +33,10 @@ func CreateUdpServer(proxyConnection *handlers.DestinationMessageHandler, params
 		logger = zap.Must(zap.NewDevelopment())
 	}
 
-	udpAddr, udpAddrErr := net.ResolveUDPAddr("udp", params.DestinationAddr)
-	if udpAddrErr != nil {
-		logger.Error("Failed to resolve endpoint address", zap.Error(udpAddrErr))
-		return nil, udpAddrErr
-	}
-
 	return &udpServer{
 		proxyConnection: proxyConnection,
 		logger:          logger,
 		params:          params,
-		destAddr:        udpAddr,
 	}, nil
 }
 
@@ -100,19 +94,31 @@ func (s *udpServer) Start(ctx context.Context) error {
 				}
 			}
 
-			if !clientAddr.IP.Equal(s.destAddr.IP) ||
-				clientAddr.Port != s.destAddr.Port {
-				s.logger.Info("Message did not come from destination, skipping", zap.String("clientAddr", clientAddr.String()),
-					zap.String("expectedAddr", s.destAddr.String()))
-				continue
-			}
-
 			payload := buf[0:bytesRead]
 
 			msgType := GetDestinationMessageType(payload)
 			clientId := GetDestinationClientId(payload)
 			if clientId == 0xFFFFFFFF {
 				s.logger.Error("Could not extract client ID, skipping")
+				continue
+			}
+
+			if !(func() bool {
+				s.mut_connections.RLock()
+				defer s.mut_connections.RUnlock()
+
+				if addr, has := s.connections[clientId]; has {
+					if !clientAddr.IP.Equal(addr.IP) ||
+						clientAddr.Port != addr.Port {
+						s.logger.Info("Message did not come from destination, skipping", zap.String("clientAddr", clientAddr.String()),
+							zap.String("expectedAddr", addr.String()))
+						return false
+					}
+					return true
+				}
+
+				return false
+			}()) {
 				continue
 			}
 
@@ -155,17 +161,32 @@ func (s *udpServer) Start(ctx context.Context) error {
 				return
 			case connReq := <-s.proxyConnection.OpenClientChannel:
 				SetClientId(connReq.AppData, connReq.ClientId)
-				conn.WriteToUDP(connReq.AppData, s.destAddr)
+				connErr := func() error {
+					s.mut_connections.Lock()
+					defer s.mut_connections.Unlock()
+
+					clientAddr, clientAddrErr := net.ResolveUDPAddr("udp", connReq.ConnectionString)
+					if clientAddrErr != nil {
+						return clientAddrErr
+					}
+					s.connections[connReq.ClientId] = clientAddr
+					return nil
+				}()
+				if connErr != nil {
+					s.logger.Error("Failed to connect to client", zap.Error(connErr))
+					continue
+				}
+				s.WriteMessage(conn, connReq.ClientId, connReq.AppData)
 			case closeReq := <-s.proxyConnection.ProxyCloseRequests:
 				SetClientId(closeReq.AppData, closeReq.ClientId)
-				conn.WriteToUDP(closeReq.AppData, s.destAddr)
+				s.WriteMessage(conn, closeReq.ClientId, closeReq.AppData)
 			case outgoingMessage := <-s.proxyConnection.OutgoingMessageChannel:
 				SetClientId(outgoingMessage.Data, outgoingMessage.ClientId)
 				msgType := GetClientMessageType(outgoingMessage.Data)
 				if msgType == ClientMessageType_Ping {
 					SetPingForwardTimestamp(outgoingMessage.Data, uint64(s.proxyConnection.GetNowTimestamp()))
 				}
-				conn.WriteToUDP(outgoingMessage.Data, s.destAddr)
+				s.WriteMessage(conn, outgoingMessage.ClientId, outgoingMessage.Data)
 			}
 		}
 	}()
@@ -173,4 +194,16 @@ func (s *udpServer) Start(ctx context.Context) error {
 	wg.Wait()
 
 	return nil
+}
+
+func (s *udpServer) WriteMessage(conn *net.UDPConn, clientId uint32, msg []byte) {
+	s.mut_connections.RLock()
+	defer s.mut_connections.RUnlock()
+
+	addr, has := s.connections[clientId]
+	if !has {
+		return
+	}
+
+	conn.WriteToUDP(msg, addr)
 }
