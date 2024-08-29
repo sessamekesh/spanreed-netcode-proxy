@@ -141,7 +141,7 @@ export const BenchmarkParams: React.FC<BenchmarkParamsProps> = React.memo(
             onChange={(e) => !loading && setSpanUrl(e.target.value)}
           ></input>
 
-          {/* <label htmlFor="tb-backend-url">Demo Server Address:</label>
+          <label htmlFor="tb-backend-url">Demo Server Address:</label>
           <input
             id="tb-backend-url"
             type="text"
@@ -151,7 +151,7 @@ export const BenchmarkParams: React.FC<BenchmarkParamsProps> = React.memo(
             }}
             value={destUrl}
             onChange={(e) => !loading && setDestUrl(e.target.value)}
-          ></input> */}
+          ></input>
 
           <label htmlFor="tb-msg-ct">Ping Count:</label>
           <div style={{ display: "flex", flexDirection: "row" }}>

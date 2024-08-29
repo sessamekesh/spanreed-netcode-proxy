@@ -28,8 +28,8 @@ export class BenchmarkApp {
     private readonly app: any
   ) {}
 
-  start_experiment(payloadSize: number, messageCount: number) {
-    this.app["start_experiment"](payloadSize, messageCount);
+  start_experiment(destUrl: string, payloadSize: number, messageCount: number) {
+    this.app["start_experiment"](destUrl, payloadSize, messageCount);
   }
 
   is_running(): boolean {

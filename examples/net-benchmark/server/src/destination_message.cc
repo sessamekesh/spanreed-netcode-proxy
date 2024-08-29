@@ -94,6 +94,8 @@ std::vector<std::uint8_t> serialize_destination_message(
     case DestinationMessageType::Stats:
       *(raw_buff + 16) = 0x4;
       break;
+    case DestinationMessageType::UNKNOWN:
+      break;  // no-op
   }
 
   if (msg.message_type == DestinationMessageType::ConnectionVerdict) {

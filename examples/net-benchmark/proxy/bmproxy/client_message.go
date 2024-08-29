@@ -42,3 +42,12 @@ func SetPingForwardTimestamp(payload []byte, timestamp uint64) []byte {
 	binary.LittleEndian.PutUint64(payload[offset:], timestamp)
 	return payload
 }
+
+func GetDestAddr(payload []byte) string {
+	if len(payload) < 17 {
+		return ""
+	}
+
+	dest_url_len := payload[17]
+	return string(payload[17 : 17+dest_url_len])
+}

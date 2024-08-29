@@ -4,6 +4,7 @@
 #else
 #include <arpa/inet.h>
 #include <errno.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
@@ -113,7 +114,32 @@ bool NetClient::Start() {
       *reinterpret_cast<ULONG*>(remoteHost->h_addr_list[0]);
 
 #else
-  return false;
+  hostent* remoteHost = nullptr;
+  if (isalpha(host[0])) {
+    remoteHost = gethostbyname(host.c_str());
+  } else {
+    server_addr.sin_addr.s_addr = inet_addr(host.c_str());
+    if (server_addr.sin_addr.s_addr == INADDR_NONE) {
+      return false;
+    } else {
+      remoteHost = gethostbyaddr(reinterpret_cast<char*>(&server_addr.sin_addr),
+                                 4, AF_INET);
+    }
+  }
+  if (remoteHost == nullptr) {
+    return false;
+  }
+
+  if (remoteHost->h_addrtype != AF_INET) {
+    return false;
+  }
+
+  if (remoteHost->h_addr_list[0] == nullptr) {
+    return false;
+  }
+
+  server_addr.sin_addr.s_addr =
+      *reinterpret_cast<unsigned long*>(remoteHost->h_addr_list[0]);
 #endif
 
   SOCKTYPE client_socket{};

@@ -71,7 +71,8 @@ class BenchmarkApp {
  public:
   BenchmarkApp();
 
-  void start_experiment(std::uint32_t payload_size, std::uint32_t ping_count);
+  void start_experiment(std::string dest_url, std::uint32_t payload_size,
+                        std::uint32_t ping_count);
 
   void add_server_message(ServerMessage msg);
   std::optional<ClientMessage> get_client_message();
@@ -80,6 +81,7 @@ class BenchmarkApp {
 
  private:
   bool is_running_;
+  std::string dest_url_;
   std::uint32_t payload_size_;
   std::uint32_t remaining_ping_count_;
 

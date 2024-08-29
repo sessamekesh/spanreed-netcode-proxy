@@ -7,8 +7,8 @@ const std::uint32_t kExpectedMagicNumber = 0x5350414E;
 
 namespace spanreed::benchmark {
 
-static void serialize_ping_message(std::uint8_t* buff,
-                                   const PingMessage& ping) {
+static void serialize_ping_message(std::uint8_t *buff,
+                                   const PingMessage &ping) {
   LittleEndian::WriteU64(buff, ping.client_send_ts);
   /* proxy_recv_client_ts */ LittleEndian::WriteU64(buff + 8, 0x00);
   /* proxy_forward_client_ts */ LittleEndian::WriteU64(buff + 16, 0x00);
@@ -18,12 +18,28 @@ static void serialize_ping_message(std::uint8_t* buff,
   memcpy(buff + 34, &ping.payload[0], ping.payload.length());
 }
 
+static void serialize_connect_client_meta(std::uint8_t *buff,
+                                          const ConnectClientMessage &msg) {
+  buff[0] = static_cast<std::uint8_t>(msg.dest_url.length());
+  memcpy(buff + 1, &msg.dest_url[0], msg.dest_url.length());
+}
+
 std::optional<std::vector<std::uint8_t>> serialize_client_message(
-    const ClientMessage& msg) {
+    const ClientMessage &msg) {
   std::size_t buff_size = sizeof(ClientMessageHeader) + 1;
   switch (msg.message_type) {
     case ClientMessageType::Ping:
       buff_size += 34 + std::get<PingMessage>(msg.body).payload.length();
+      break;
+    case ClientMessageType::ConnectClient:
+      buff_size +=
+          1 + std::get<ConnectClientMessage>(msg.body).dest_url.length();
+      break;
+    case ClientMessageType::UNKNOWN:
+    case ClientMessageType::DisconnectClient:
+    case ClientMessageType::GetStats:
+      // no-op
+      break;
   }
 
   if (buff_size > 10240ull) {
@@ -36,7 +52,7 @@ std::optional<std::vector<std::uint8_t>> serialize_client_message(
     return std::nullopt;
   }
 
-  std::uint8_t* raw_buff = &buff[0];
+  std::uint8_t *raw_buff = &buff[0];
 
   LittleEndian::WriteU32(raw_buff, msg.header.magic_header);
   LittleEndian::WriteU32(raw_buff + 4, msg.header.client_id);
@@ -47,6 +63,8 @@ std::optional<std::vector<std::uint8_t>> serialize_client_message(
   switch (msg.message_type) {
     case ClientMessageType::ConnectClient:
       raw_buff[16] = 1;
+      serialize_connect_client_meta(raw_buff + 17,
+                                    std::get<ConnectClientMessage>(msg.body));
       break;
     case ClientMessageType::DisconnectClient:
       raw_buff[16] = 2;

@@ -52,6 +52,28 @@ static std::optional<PingMessage> unpack_ping_message(std::uint8_t* buffer,
   return msg;
 }
 
+std::optional<ConnectClientMessage> unpack_connect_client_message(
+    std::uint8_t* buffer, std::size_t buffer_len) {
+  if (buffer_len < 1) {
+    ::getLogger()->warn(
+        "ConnectClientMessage needs 1 byte for dest_url length, has zero");
+    return std::nullopt;
+  }
+
+  auto dest_url_len = buffer[0];
+  if (buffer_len < dest_url_len - 1) {
+    ::getLogger()->warn(
+        "ConnectClientMessage expecting dest_url len {}, got {}", dest_url_len,
+        buffer_len - 1);
+    return std::nullopt;
+  }
+
+  ConnectClientMessage msg{};
+  msg.dest_url.resize(dest_url_len, '\0');
+  memcpy(&msg.dest_url[0], buffer + 1, dest_url_len);
+  return msg;
+}
+
 std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,
                                                 std::size_t buffer_len) {
   if (buffer_len < ProxyMessageHeader::HEADER_SIZE + 1) {
@@ -77,6 +99,12 @@ std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,
 
   if (msgType == 1) {
     msg.message_type = ProxyMessageType::ConnectClient;
+    auto maybe_connect_msg =
+        unpack_connect_client_message(buffer + 17, buffer_len - 17);
+    if (!maybe_connect_msg.has_value()) {
+      return std::nullopt;
+    }
+    msg.body = *maybe_connect_msg;
   } else if (msgType == 2) {
     msg.message_type = ProxyMessageType::DisconnectClient;
   } else if (msgType == 3) {

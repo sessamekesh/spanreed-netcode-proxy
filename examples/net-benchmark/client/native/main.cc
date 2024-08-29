@@ -69,7 +69,7 @@ int main() {
   std::thread udp_thread([&client] { client.Start(); });
 
   std::cout << "Starting experiment!" << std::endl;
-  app.start_experiment(payload_size, msg_ct);
+  app.start_experiment(destination_addr, payload_size, msg_ct);
   std::chrono::high_resolution_clock::time_point last_sample_at =
       std::chrono::high_resolution_clock::now();
   while (app.is_running()) {

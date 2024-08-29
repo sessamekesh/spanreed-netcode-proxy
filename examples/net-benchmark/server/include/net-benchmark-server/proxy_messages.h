@@ -27,6 +27,10 @@ enum class ProxyMessageType {
   GetStats,
 };
 
+struct ConnectClientMessage {
+  std::string dest_url;
+};
+
 struct PingMessage {
   std::uint64_t client_send_ts;
   std::uint64_t proxy_recv_client_ts;
@@ -35,7 +39,8 @@ struct PingMessage {
   std::string payload;
 };
 
-typedef std::variant<std::monostate, PingMessage> ProxyMessageBody;
+typedef std::variant<std::monostate, ConnectClientMessage, PingMessage>
+    ProxyMessageBody;
 
 struct ProxyMessage {
   ProxyMessageHeader header{};
@@ -43,7 +48,7 @@ struct ProxyMessage {
   ProxyMessageBody body = std::monostate{};
 };
 
-std::optional<ProxyMessage> parse_proxy_message(std::uint8_t* buffer,
+std::optional<ProxyMessage> parse_proxy_message(std::uint8_t *buffer,
                                                 std::size_t buffer_len);
 
 }  // namespace spanreed::benchmark

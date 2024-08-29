@@ -33,11 +33,6 @@ func main() {
 	keyPath := os.Getenv("SPANREED_TLS_KEY_PATH")
 	serverEndpoint := os.Getenv("SPANREED_DESTINATION_ADDRESS")
 
-	if serverEndpoint == "" {
-		logger.Error("Need SPANREED_DESTINATION_ADDRESS to route messages correctly")
-		return
-	}
-
 	if certPath == "" || keyPath == "" {
 		logger.Error("Need cert+key path for TLS setup")
 		return
@@ -75,7 +70,7 @@ func main() {
 		KeyPath:    keyPath,
 		Logger:     logger,
 		ServerAddr: serverEndpoint,
-		ListenAddr: fmt.Sprintf(":%d", port),
+		ListenAddr: fmt.Sprintf("localhost:%d", port),
 	})
 	if wtClientErr != nil {
 		logger.Error("Failed to create WT server", zap.Error(wtClientErr))

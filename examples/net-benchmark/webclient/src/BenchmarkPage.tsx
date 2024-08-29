@@ -81,7 +81,7 @@ export const BenchmarkPage: React.FC = () => {
         const benchmarkApp = benchmarkModule.CreateBenchmark();
         cleanupOps.push(() => benchmarkApp.cleanup());
 
-        benchmarkApp.start_experiment(payloadSize, pingCt);
+        benchmarkApp.start_experiment(destUrl, payloadSize, pingCt);
 
         //
         // On receive a message, immediately notify the benchmark app

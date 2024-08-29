@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
@@ -144,9 +145,13 @@ func (wt *webtransportBenchmarkClient) onWtRequest(ctx context.Context, w http.R
 				log.Warn("Invalid message type from client")
 				return
 			case ClientMessageType_ConnectClient:
+				connStr := GetDestAddr(readBuffer)
+				if connStr == "" {
+					connStr = wt.params.ServerAddr
+				}
 				wt.proxyConnection.OpenClientChannel <- handlers.OpenClientConnectionCommand{
 					ClientId:         clientId,
-					ConnectionString: wt.params.ServerAddr,
+					ConnectionString: connStr,
 					AppData:          readBuffer,
 				}
 			case ClientMessageType_DisconnectClient:
@@ -239,6 +244,9 @@ func (wt *webtransportBenchmarkClient) Start(ctx context.Context) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "Pong")
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		wt.onWtRequest(ctx, w, r)
 	})

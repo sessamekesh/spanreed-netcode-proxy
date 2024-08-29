@@ -103,8 +103,10 @@ BenchmarkApp::BenchmarkApp()
       ooo_ct_(0ul),
       needs_stats_(true) {}
 
-void BenchmarkApp::start_experiment(std::uint32_t payload_size,
+void BenchmarkApp::start_experiment(std::string dest_url,
+                                    std::uint32_t payload_size,
                                     std::uint32_t ping_count) {
+  dest_url_ = dest_url;
   payload_size_ = payload_size;
   remaining_ping_count_ = ping_count;
   is_connected_ = false;
@@ -190,6 +192,8 @@ void BenchmarkApp::add_server_message(ServerMessage msg) {
       needs_stats_ = false;
       net_stats_ = std::get<ServerNetStats>(msg.body);
     } break;
+    case ServerMessageType::UNKNOWN:
+      break;
   }
 
   //
@@ -231,6 +235,9 @@ std::optional<ClientMessage> BenchmarkApp::get_client_message() {
 
   if (!is_connected_) {
     msg.message_type = ClientMessageType::ConnectClient;
+    msg.body = ConnectClientMessage{
+        .dest_url = dest_url_,
+    };
     return msg;
   }
 

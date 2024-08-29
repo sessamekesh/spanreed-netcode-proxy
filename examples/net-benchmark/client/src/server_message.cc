@@ -62,8 +62,8 @@ static std::optional<ServerNetStats> unpack_net_stats(const std::uint8_t* buff,
   return stats;
 }
 
-std::optional<ServerMessage> spanreed::benchmark::parse_server_message(
-    const std::uint8_t* buff, std::size_t buff_len) {
+std::optional<ServerMessage> parse_server_message(const std::uint8_t* buff,
+                                                  std::size_t buff_len) {
   if (buff_len < sizeof(ServerMessageHeader) + 1) {
     return std::nullopt;
   }

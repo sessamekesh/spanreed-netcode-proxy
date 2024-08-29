@@ -30,10 +30,15 @@ struct PingMessage {
   std::string payload;
 };
 
+struct ConnectClientMessage {
+  std::string dest_url;
+};
+
 struct ClientMessage {
   ClientMessageHeader header{};
   ClientMessageType message_type = ClientMessageType::UNKNOWN;
-  std::variant<PingMessage, std::monostate> body = std::monostate{};
+  std::variant<PingMessage, ConnectClientMessage, std::monostate> body =
+      std::monostate{};
 };
 
 std::optional<std::vector<std::uint8_t>> serialize_client_message(

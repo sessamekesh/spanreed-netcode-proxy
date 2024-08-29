@@ -55,6 +55,11 @@ void BenchmarkApp::Start() {
       case ProxyMessageType::DisconnectClient: {
         clients.erase(msg.header.client_id);
       } break;
+      case ProxyMessageType::Ping:
+      case ProxyMessageType::UNKNOWN:
+      case ProxyMessageType::GetStats:
+        // no-op
+        break;
     }
 
     //
@@ -131,6 +136,11 @@ void BenchmarkApp::Start() {
 
         udp_server_->QueueMessage(std::move(response));
       } break;
+      case ProxyMessageType::DisconnectClient: {
+        Stop();
+      } break;
+      case ProxyMessageType::UNKNOWN:
+        break;
     }
   }
 
