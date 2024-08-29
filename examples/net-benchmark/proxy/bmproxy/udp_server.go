@@ -37,6 +37,8 @@ func CreateUdpServer(proxyConnection *handlers.DestinationMessageHandler, params
 		proxyConnection: proxyConnection,
 		logger:          logger,
 		params:          params,
+		mut_connections: sync.RWMutex{},
+		connections:     make(map[uint32]*net.UDPAddr),
 	}, nil
 }
 
